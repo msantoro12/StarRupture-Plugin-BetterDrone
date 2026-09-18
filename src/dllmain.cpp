@@ -78,6 +78,13 @@ static void OnConfigChanged(const char* section, const char* key, const char* ne
         return;
     }
 
+    if (strcmp(section, "Controls") == 0 && strcmp(key, "BoostKey") == 0)
+    {
+        UpdateBoostKeyCache(newValue);
+        LOG_DEBUG("OnConfigChanged: BoostKey rebound to '%s'", newValue ? newValue : "");
+        return;
+    }
+
     LOG_DEBUG("OnConfigChanged: [%s] %s updated", section, key);
 }
 

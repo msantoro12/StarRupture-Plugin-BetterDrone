@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <windows.h>
 
 DroneSettings g_drone;
 
@@ -19,6 +20,15 @@ namespace
     // whether boost actually applies. The callback itself never touches
     // UWorld/UObject state -- it may run off the game thread.
     std::atomic<bool> g_boostKeyHeld{ false };
+
+    // VK of the boost key when it's a bare modifier (LeftShift etc.), 0
+    // otherwise. The ModLoader's ProcessWindowMessage never dispatches a
+    // bare modifier key to any keybind (it returns before Dispatch for
+    // VK_L/RSHIFT, VK_L/RCONTROL, VK_L/RMENU), so OnBoostKeyPressed simply
+    // never fires for the "LeftShift" default. OnDroneTick polls this VK
+    // directly as a fallback. Updated via UpdateBoostKeyCache, never read
+    // from disk on the tick.
+    std::atomic<int> g_boostKeyVk{ 0 };
 
     // Updated once per tick from the game thread, read by the keybind
     // callback to log whether the player was in the drone at press time.
@@ -34,14 +44,58 @@ namespace
     bool g_boostWasActive = false;
     bool g_loggedInstanceReport = false;
 
+    // Names the ModLoader itself binds a bare modifier key to (see
+    // keybind_registry.cpp), matched verbatim against the config string.
+    int ResolveModifierVk(const char* keyName)
+    {
+        static constexpr struct { const char* name; int vk; } kModifierVks[] = {
+            { "LeftShift",    VK_LSHIFT   },
+            { "RightShift",   VK_RSHIFT   },
+            { "LeftControl",  VK_LCONTROL },
+            { "RightControl", VK_RCONTROL },
+            { "LeftAlt",      VK_LMENU    },
+            { "RightAlt",     VK_RMENU    },
+        };
+
+        if (!keyName)
+            return 0;
+
+        for (const auto& entry : kModifierVks)
+            if (std::strcmp(keyName, entry.name) == 0)
+                return entry.vk;
+
+        return 0;
+    }
+
+    // True while this process owns the foreground window, so a bare
+    // modifier held while alt-tabbed away never registers as boost.
+    bool GameHasFocus()
+    {
+        HWND fg = GetForegroundWindow();
+        if (!fg)
+            return false;
+
+        DWORD fgProcessId = 0;
+        GetWindowThreadProcessId(fg, &fgProcessId);
+        return fgProcessId == GetCurrentProcessId();
+    }
+
     void OnBoostKeyPressed(EModKey, EModKeyEvent event)
     {
         const bool held = (event == EModKeyEvent::Pressed);
         g_boostKeyHeld.store(held, std::memory_order_relaxed);
 
-        LOG_INFO("OnBoostKeyPressed: boost key %s (in drone: %s)",
-            held ? "pressed" : "released",
-            g_lastKnownInDrone.load(std::memory_order_relaxed) ? "yes" : "no");
+        // Only ever fires for a non-modifier boost key (see g_boostKeyVk);
+        // LOG_INFO outside the drone would otherwise mean every sprint tap
+        // once a plain key is bound.
+        if (g_lastKnownInDrone.load(std::memory_order_relaxed))
+        {
+            LOG_INFO("OnBoostKeyPressed: boost key %s (in drone: yes)", held ? "pressed" : "released");
+        }
+        else
+        {
+            LOG_DEBUG("OnBoostKeyPressed: boost key %s (in drone: no)", held ? "pressed" : "released");
+        }
     }
 
     void OnWorldBeginPlay(SDK::UWorld*)
@@ -195,7 +249,10 @@ void UpdateActiveDrones()
     LOG_DEBUG("UpdateActiveDrones: updated %d of %d drone instance(s), %d share the CDO settings object",
         updated, found, sharedCdo);
 
-    if (!g_loggedInstanceReport)
+    // Gated on found > 0: this runs from OnWorldBeginPlay before any drone
+    // exists, and logging "0 found" there would use up the once-per-session
+    // report before it had anything to say.
+    if (!g_loggedInstanceReport && found > 0)
     {
         g_loggedInstanceReport = true;
         LOG_INFO("UpdateActiveDrones: session check -- %d drone instance(s) found, %d use the CDO settings object directly",
@@ -236,6 +293,11 @@ void SetBoostKeyHeld(bool held)
     g_boostKeyHeld.store(held, std::memory_order_relaxed);
 }
 
+void UpdateBoostKeyCache(const char* keyName)
+{
+    g_boostKeyVk.store(ResolveModifierVk(keyName), std::memory_order_relaxed);
+}
+
 void OnDroneTick(float deltaSeconds)
 {
     if (!g_drone.valid || !g_drone.speedPerSec)
@@ -268,7 +330,19 @@ void OnDroneTick(float deltaSeconds)
         needsInstanceUpdate = true;
     g_wasInDrone = inDrone;
 
-    const bool boostActive = g_boostKeyHeld.load(std::memory_order_relaxed) && inDrone;
+    // The ModLoader never dispatches a bare modifier key to keybinds (see
+    // g_boostKeyVk), so the "LeftShift" default never reaches
+    // OnBoostKeyPressed. Poll it directly, only while the drone is out
+    // (nowhere else needs it) and only with the game in the foreground, so
+    // holding Shift in another window never engages boost.
+    bool held = g_boostKeyHeld.load(std::memory_order_relaxed);
+    if (!held && inDrone)
+    {
+        const int vk = g_boostKeyVk.load(std::memory_order_relaxed);
+        held = vk != 0 && (GetAsyncKeyState(vk) & 0x8000) != 0 && GameHasFocus();
+    }
+
+    const bool boostActive = held && inDrone;
 
     const float baseSpeed = DroneConfig::Config::ReadSpeedPerSec();
     float targetSpeed = boostActive ? baseSpeed * DroneConfig::Config::ReadBoostMultiplier() : baseSpeed;
@@ -342,6 +416,7 @@ void RegisterBoostKey(IPluginSelf* self)
     self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Pressed, OnBoostKeyPressed);
     self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Released, OnBoostKeyPressed);
     snprintf(g_registeredBoostKey, sizeof(g_registeredBoostKey), "%s", keyName);
+    UpdateBoostKeyCache(keyName);
 }
 
 void UnregisterBoostKey(IPluginSelf* self)
