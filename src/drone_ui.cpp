@@ -4,13 +4,14 @@
 #include "drone_audio.h"
 #include "ui_widgets.h"
 #include "plugin_helpers.h"
+#include <atomic>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
 
 static IPluginSelf* s_self = nullptr;
 static PanelHandle s_panelHandle = nullptr;
-static bool s_menuOpen = false;
+static std::atomic<bool> s_menuOpen{ false };
 static void* g_inputCaptureToken = nullptr;
 static char g_registeredToggleKey[64] = {};
 
@@ -18,6 +19,25 @@ namespace
 {
     constexpr float kActiveEpsilon = 0.0001f;
     constexpr int   kTableFlags = (1 << 6) | (1 << 9) | (3 << 13);
+
+    // ImGuiFocusedFlags_RootWindow (1<<1) | ImGuiFocusedFlags_ChildWindows (1<<0),
+    // from StarRupture-ImGui/imgui/imgui.h. True while this panel or any of its
+    // children has focus, so Escape closes only the panel being looked at.
+    constexpr int kFocusedRootAndChildWindows = 3;
+
+    std::atomic<bool> g_escapeCloseRequested{ false };
+
+    // Escape is a universal dismiss key, not a per-plugin setting, so it is
+    // registered by enum rather than by name and never appears on the loader
+    // config page. The callback's thread isn't guaranteed, so it only raises
+    // a flag; RenderDronePanel does the actual close from the render thread.
+    void OnEscapePressed(EModKey, EModKeyEvent event)
+    {
+        if (event != EModKeyEvent::Pressed)
+            return;
+        if (s_menuOpen.load(std::memory_order_relaxed))
+            g_escapeCloseRequested.store(true, std::memory_order_relaxed);
+    }
 
     // Conversion + slider feel for one field, per display unit. Values are
     // always stored and clamped in engine units (cm, cm/s); this only
@@ -290,7 +310,7 @@ static void OnPanelClosed(PanelHandle handle)
 {
     if (handle == s_panelHandle)
     {
-        s_menuOpen = false;
+        s_menuOpen.store(false, std::memory_order_relaxed);
         if (s_self && g_inputCaptureToken)
         {
             s_self->hooks->UI->ReleaseInputCapture(g_inputCaptureToken);
@@ -312,6 +332,9 @@ void InitDroneUI(IPluginSelf* self)
     s_panelHandle = self->hooks->UI->RegisterPanel(&desc);
     self->hooks->UI->RegisterOnPanelWindowClosed(OnPanelClosed);
 
+    if (self->hooks->Input)
+        self->hooks->Input->RegisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, OnEscapePressed);
+
     RebindToggleKey();
 }
 
@@ -319,6 +342,9 @@ void ShutdownDroneUI(IPluginSelf* self)
 {
     if (s_self && s_self->hooks)
     {
+        if (s_self->hooks->Input)
+            s_self->hooks->Input->UnregisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, OnEscapePressed);
+
         if (g_registeredToggleKey[0] != '\0' && s_self->hooks->Input)
         {
             s_self->hooks->Input->UnregisterKeybindByName(g_registeredToggleKey, EModKeyEvent::Pressed, OnToggleKeyPressed);
@@ -339,7 +365,7 @@ void ShutdownDroneUI(IPluginSelf* self)
         }
     }
     s_self = nullptr;
-    s_menuOpen = false;
+    s_menuOpen.store(false, std::memory_order_relaxed);
 }
 
 void RebindToggleKey()
@@ -365,9 +391,12 @@ void ToggleDroneMenu()
 {
     if (!s_panelHandle || !s_self || !s_self->hooks || !s_self->hooks->UI) return;
 
-    s_menuOpen = !s_menuOpen;
-    if (s_menuOpen)
+    const bool opening = !s_menuOpen.load(std::memory_order_relaxed);
+    s_menuOpen.store(opening, std::memory_order_relaxed);
+
+    if (opening)
     {
+        g_escapeCloseRequested.store(false, std::memory_order_relaxed);
         s_self->hooks->UI->SetPanelOpen(s_panelHandle);
         g_inputCaptureToken = s_self->hooks->UI->AcquireInputCapture();
     }
@@ -410,6 +439,16 @@ static void RenderUnavailableMessage(IModLoaderImGui* imgui, float avail_x, floa
 
 void RenderDronePanel(IModLoaderImGui* ui)
 {
+    // Deferred by one frame: closing here, inside the same Escape keypress
+    // that requested it, could release input capture in time for that same
+    // press to also reach the game's own pause menu.
+    if (g_escapeCloseRequested.exchange(false, std::memory_order_relaxed) &&
+        ui->IsWindowFocused(kFocusedRootAndChildWindows))
+    {
+        ToggleDroneMenu();
+        return;
+    }
+
     float avail_x = 0.0f, avail_y = 0.0f;
     ui->GetContentRegionAvail(&avail_x, &avail_y);
 
