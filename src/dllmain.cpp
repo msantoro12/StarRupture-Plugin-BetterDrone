@@ -2,10 +2,15 @@
 #include "drone_config.h"
 #include "drone_interact.h"
 #include "drone_wave_patch.h"
+#include "drone_audio.h"
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
 #include <Engine_classes.hpp>
 #include <windows.h>
+#include <cstring>
+#include <cstdlib>
+
+#include "drone_ui.h"
 
 static IPluginSelf* g_self = nullptr;
 
@@ -20,7 +25,7 @@ static PluginInfo s_info =
     "BetterDrone",
     MODLOADER_BUILD_TAG,
     "AlienX",
-    "Adjust building drone limits via plugin config.",
+    "Adjust building drone limits, speed boost, and audio via plugin config.",
     PLUGIN_INTERFACE_VERSION,
     PLUGIN_TARGET_CLIENT
 };
@@ -56,20 +61,34 @@ static void OnEngineInit()
     UpdateActiveDrones();
 }
 
+static void OnEngineTick(float deltaSeconds)
+{
+    OnDroneTick(deltaSeconds);
+    DroneAudio::Tick(deltaSeconds);
+}
+
 static void OnConfigChanged(const char* section, const char* key, const char* newValue)
 {
     if (!section || !key || !newValue)
         return;
 
-    // [Interaction] is not gated on g_drone.valid -- it has nothing to do with
-    // the settings CDO, and dropping it here is why rebinding the interact key
-    // did nothing until the plugin was reloaded.
     if (strcmp(section, "Interaction") == 0)
     {
-        // "Interact In Drone Mode" is re-read on every use and needs no action;
-        // the key is held by the loader's keybind registry and must be moved.
         if (strcmp(key, "Interact Key") == 0)
             RebindInteractKey();
+        return;
+    }
+
+    if (strcmp(section, "Controls") == 0)
+    {
+        if (strcmp(key, "BoostKey") == 0)
+            RebindBoostKey();
+        return;
+    }
+
+    if (strcmp(section, "Audio") == 0)
+    {
+        DroneAudio::OnConfigChanged(section, key, newValue);
         return;
     }
 
@@ -98,13 +117,14 @@ static void OnConfigChanged(const char* section, const char* key, const char* ne
         return;
     }
 
-    UpdateActiveDrones();
+    RequestUpdateActiveDrones();
 }
 
 static void OnWorldBeginPlay(SDK::UWorld*)
 {
-    LOG_DEBUG("OnWorldBeginPlay: updating active drones");
+    LOG_DEBUG("OnWorldBeginPlay: updating active drones & applying audio config");
     UpdateActiveDrones();
+    DroneAudio::ApplySavedConfig();
 }
 
 static void OnEngineShutdown()
@@ -118,9 +138,6 @@ extern "C" __declspec(dllexport) PluginInfo* GetPluginInfo()
     return &s_info;
 }
 
-// Runs after GetPluginInfo and before PluginInit, and is the only context in
-// which the loader lets a plugin pattern scan. Resolve here, install from
-// PluginInit — self->hooks is null for the duration of this event.
 extern "C" __declspec(dllexport) void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scanner)
 {
     g_self = self;
@@ -136,16 +153,23 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     LOG_DEBUG("PluginInit: registering hooks");
 
     DroneConfig::Config::SetSelf(self);
+    DroneAudio::Initialize(self);
+    InitGameSessionTracking(self);
+    InitDroneUI(self);
 
     self->hooks->Engine->RegisterOnInit(OnEngineInit);
     self->hooks->Engine->RegisterOnShutdown(OnEngineShutdown);
+    self->hooks->Engine->RegisterOnTick(OnEngineTick);
     self->hooks->World->RegisterOnWorldBeginPlay(OnWorldBeginPlay);
 
     InitWavePatch();
     InitDroneInteract();
+    RegisterBoostKey(self);
 
     if (self->hooks->UI)
+    {
         self->hooks->UI->RegisterOnConfigChanged(self, OnConfigChanged);
+    }
 
     LOG_INFO("BetterDrone initialised");
     return true;
@@ -155,18 +179,25 @@ extern "C" __declspec(dllexport) void PluginShutdown()
 {
     LOG_DEBUG("PluginShutdown: restoring CDO defaults and unregistering hooks");
 
+    UnregisterBoostKey(g_self);
     ShutdownDroneInteract();
     ShutdownWavePatch();
+    DroneAudio::Shutdown();
+    ShutdownDroneUI(g_self);
+    ShutdownGameSessionTracking(g_self);
     RestoreCDODefaults();
 
     if (g_self)
     {
         g_self->hooks->Engine->UnregisterOnInit(OnEngineInit);
         g_self->hooks->Engine->UnregisterOnShutdown(OnEngineShutdown);
+        g_self->hooks->Engine->UnregisterOnTick(OnEngineTick);
         g_self->hooks->World->UnregisterOnWorldBeginPlay(OnWorldBeginPlay);
 
         if (g_self->hooks->UI)
+        {
             g_self->hooks->UI->UnregisterOnConfigChanged(g_self, OnConfigChanged);
+        }
 
         g_self = nullptr;
     }

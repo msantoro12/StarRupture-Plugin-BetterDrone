@@ -1,11 +1,82 @@
 #include "drone_settings.h"
+#include "drone_config.h"
 #include "plugin_helpers.h"
 #include <AuActorPlacement_classes.hpp>
 #include <Chimera_classes.hpp>
 #include <BP_FloatingDrone_classes.hpp>
 #include <Basic.hpp>
+#include <cmath>
+#include <cstring>
 
 DroneSettings g_drone;
+
+namespace
+{
+    bool g_isBoosting = false;
+    float g_currentEffectiveSpeed = 0.0f;
+    char g_registeredBoostKey[64] = {};
+    IPluginSelf* s_self = nullptr;
+    IPluginSelf* s_sessionSelf = nullptr;
+    bool g_inGameSession = false;
+
+    void OnBoostKeyPressed(EModKey, EModKeyEvent event)
+    {
+        if (event == EModKeyEvent::Pressed)
+        {
+            SetBoostActive(true);
+        }
+        else if (event == EModKeyEvent::Released)
+        {
+            SetBoostActive(false);
+        }
+    }
+
+    void OnWorldBeginPlay(SDK::UWorld*)
+    {
+        g_inGameSession = true;
+        RequestUpdateActiveDrones();
+    }
+
+    void OnWorldEndPlay(SDK::UWorld*, const char* worldName)
+    {
+        if (worldName && std::strcmp(worldName, "ChimeraMain") == 0)
+            g_inGameSession = false;
+    }
+}
+
+bool IsInGameSession()
+{
+    return g_inGameSession;
+}
+
+void InitGameSessionTracking(IPluginSelf* self)
+{
+    s_sessionSelf = self;
+    if (!self || !self->hooks || !self->hooks->World)
+        return;
+
+    self->hooks->World->RegisterOnWorldBeginPlay(OnWorldBeginPlay);
+    self->hooks->World->RegisterOnAfterWorldEndPlay(OnWorldEndPlay);
+
+    try
+    {
+        SDK::UWorld* world = SDK::UWorld::GetWorld();
+        if (world && world->GetName() == "ChimeraMain")
+            g_inGameSession = true;
+    }
+    catch (...) {}
+}
+
+void ShutdownGameSessionTracking(IPluginSelf* self)
+{
+    if (s_sessionSelf && s_sessionSelf->hooks && s_sessionSelf->hooks->World)
+    {
+        s_sessionSelf->hooks->World->UnregisterOnWorldBeginPlay(OnWorldBeginPlay);
+        s_sessionSelf->hooks->World->UnregisterOnAfterWorldEndPlay(OnWorldEndPlay);
+    }
+    s_sessionSelf = nullptr;
+    g_inGameSession = false;
+}
 
 bool InitDroneSettings()
 {
@@ -30,6 +101,7 @@ bool InitDroneSettings()
     g_drone.origMaxHeight     = *g_drone.maxHeight;
     g_drone.origWarningHeight = *g_drone.warningHeight;
     g_drone.valid             = true;
+    g_currentEffectiveSpeed   = *g_drone.speedPerSec;
 
     LOG_DEBUG("InitDroneSettings: CDO found at %p", static_cast<void*>(cdo));
     return true;
@@ -94,4 +166,106 @@ void UpdateActiveDrones()
     }
 
     LOG_DEBUG("UpdateActiveDrones: updated %d active drone(s)", updated);
+}
+
+static bool g_pendingUpdateDrones = false;
+
+void RequestUpdateActiveDrones()
+{
+    g_pendingUpdateDrones = true;
+}
+
+void SetBoostActive(bool active)
+{
+    g_isBoosting = active;
+}
+
+void OnDroneTick(float deltaSeconds)
+{
+    if (!g_drone.valid || !g_drone.speedPerSec)
+        return;
+
+    if (g_pendingUpdateDrones)
+    {
+        g_pendingUpdateDrones = false;
+        UpdateActiveDrones();
+    }
+
+    const float baseSpeed = DroneConfig::Config::ReadSpeedPerSec();
+    const float mult = g_isBoosting ? DroneConfig::Config::ReadBoostMultiplier() : 1.0f;
+    const float targetSpeed = baseSpeed * mult;
+
+    const float accel = DroneConfig::Config::ReadAcceleration();
+    const float decel = DroneConfig::Config::ReadDeceleration();
+
+    if (g_currentEffectiveSpeed <= 0.0f)
+        g_currentEffectiveSpeed = baseSpeed;
+
+    if (g_currentEffectiveSpeed < targetSpeed)
+    {
+        if (accel > 0.0f)
+        {
+            g_currentEffectiveSpeed += accel * deltaSeconds;
+            if (g_currentEffectiveSpeed > targetSpeed)
+                g_currentEffectiveSpeed = targetSpeed;
+        }
+        else
+        {
+            g_currentEffectiveSpeed = targetSpeed;
+        }
+    }
+    else if (g_currentEffectiveSpeed > targetSpeed)
+    {
+        if (decel > 0.0f)
+        {
+            g_currentEffectiveSpeed -= decel * deltaSeconds;
+            if (g_currentEffectiveSpeed < targetSpeed)
+                g_currentEffectiveSpeed = targetSpeed;
+        }
+        else
+        {
+            g_currentEffectiveSpeed = targetSpeed;
+        }
+    }
+
+    if (std::fabs(*g_drone.speedPerSec - g_currentEffectiveSpeed) > 0.01f)
+    {
+        *g_drone.speedPerSec = g_currentEffectiveSpeed;
+        UpdateActiveDrones();
+    }
+}
+
+void RegisterBoostKey(IPluginSelf* self)
+{
+    s_self = self;
+    if (!s_self || !s_self->hooks->Input)
+        return;
+
+    char keyName[64] = {};
+    DroneConfig::Config::ReadBoostKey(keyName, sizeof(keyName));
+    if (keyName[0] == '\0')
+        return;
+
+    s_self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Pressed, OnBoostKeyPressed);
+    s_self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Released, OnBoostKeyPressed);
+    snprintf(g_registeredBoostKey, sizeof(g_registeredBoostKey), "%s", keyName);
+}
+
+void UnregisterBoostKey(IPluginSelf* self)
+{
+    if (!self || !self->hooks->Input || g_registeredBoostKey[0] == '\0')
+        return;
+
+    self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKey, EModKeyEvent::Pressed, OnBoostKeyPressed);
+    self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKey, EModKeyEvent::Released, OnBoostKeyPressed);
+    g_registeredBoostKey[0] = '\0';
+}
+
+void RebindBoostKey()
+{
+    if (s_self)
+    {
+        UnregisterBoostKey(s_self);
+        RegisterBoostKey(s_self);
+    }
 }
