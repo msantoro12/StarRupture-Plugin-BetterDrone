@@ -305,8 +305,8 @@ static const DronePreset k_presets[] = {
       1000.0f, 2.0f, 0.0f, 0.0f, 5000.0f, 2000.0f },
 
     { "Better Construction",
-      "Modelled on 'Better Construction Drone' by SwiftstepsKR -- 2.5x speed, fast acceleration & double range.",
-      "Modelled on NexusMod #27 by SwiftstepsKR",
+      "Modelled on 'Better Construction Drone' by CrazyCovin -- 2.5x speed, fast acceleration & double range.",
+      "Modelled on NexusMod #27 by CrazyCovin",
       2500.0f, 2.5f, 5000.0f, 5000.0f, 10000.0f, 5000.0f },
 
     { "Agile Builder",
