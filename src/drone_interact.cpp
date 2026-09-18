@@ -5,7 +5,6 @@
 #include <Chimera_classes.hpp>
 #include <Engine_classes.hpp>
 #include <atomic>
-#include <cstring>
 #include <windows.h>
 
 namespace
@@ -404,41 +403,6 @@ bool InitDroneInteract()
 
     LOG_INFO("DroneInteract: building interaction enabled in drone mode on '%s'", g_keyName);
     return true;
-}
-
-void RebindInteractKey()
-{
-    auto* input = GetSelf()->hooks->Input;
-    if (!input)
-        return;
-
-    char newKey[sizeof(g_keyName)] = {};
-    DroneConfig::Config::ReadInteractKey(newKey, sizeof(newKey));
-
-    if (strcmp(newKey, g_keyName) == 0)
-        return;
-
-    // Unregister under the name this registered with. The loader rebinds a
-    // named entry in place and never tells the plugin, so matching on the key
-    // we think is live is exactly how a dead callback gets left behind.
-    if (g_keyName[0])
-    {
-        input->UnregisterKeybindByName(g_keyName, EModKeyEvent::Pressed,  &OnInteractKey);
-        input->UnregisterKeybindByName(g_keyName, EModKeyEvent::Released, &OnInteractKey);
-    }
-
-    strncpy_s(g_keyName, newKey, _TRUNCATE);
-
-    if (!g_keyName[0])
-    {
-        LOG_WARN("DroneInteract: interact key cleared -- interaction in drone mode is now unbound");
-        return;
-    }
-
-    input->RegisterKeybindByName(g_keyName, EModKeyEvent::Pressed,  &OnInteractKey);
-    input->RegisterKeybindByName(g_keyName, EModKeyEvent::Released, &OnInteractKey);
-
-    LOG_INFO("DroneInteract: interact key rebound to '%s'", g_keyName);
 }
 
 void ShutdownDroneInteract()

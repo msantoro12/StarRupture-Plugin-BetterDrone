@@ -93,12 +93,17 @@ namespace
     // value tracked in engine units (cm or cm/s). `scale` converts to the
     // unit currently on display; the slider's own range is chosen to feel
     // right in that unit and is independent of the hard clamp the typed
-    // Write* layer applies to whatever engine value is committed. Returns
-    // true and fills *outEngineValue when the row changes the value this
-    // frame (drag, typed edit, or reset).
+    // Write* layer applies to whatever engine value is committed.
+    //
+    // Returns true and fills *outEngineValue when the row changes the value
+    // this frame (drag step, typed edit, or reset) -- the caller should
+    // apply this live (cache + drone), every time. *outCommit is set only
+    // when the edit is actually finished (slider/box released after a real
+    // change, or the reset button, which is a single click) -- the caller
+    // should persist to disk only then, not on every drag step.
     bool RenderScaledRow(IModLoaderImGui* imgui, const char* rowId, const char* label,
                           const char* tooltip, float engineValue, float engineDefault,
-                          const FieldUnitScale& scale, float* outEngineValue)
+                          const FieldUnitScale& scale, float* outEngineValue, bool* outCommit)
     {
         const bool active = std::fabs(engineValue - engineDefault) > kActiveEpsilon;
 
@@ -127,21 +132,27 @@ namespace
 
         float value = engineValue * scale.factor;
         bool  changed = false;
+        bool  commit  = false;
 
         imgui->SetNextItemWidth(sliderW);
         if (imgui->SliderFloat("##slider", &value, scale.sliderMin, scale.sliderMax, scale.format))
             changed = true;
+        if (imgui->IsItemDeactivatedAfterEdit())
+            commit = true;
 
         imgui->SameLine(0.0f, 0.0f);
         imgui->SetNextItemWidth(-1.0f);
         if (imgui->InputFloat("##num", &value, scale.step, scale.stepFast, scale.format))
             changed = true;
+        if (imgui->IsItemDeactivatedAfterEdit())
+            commit = true;
 
         imgui->TableSetColumnIndex(2);
         if (BetterDrone::UI::ResetButton(imgui, "##reset"))
         {
             value = engineDefault * scale.factor;
             changed = true;
+            commit  = true;
         }
         if (imgui->IsItemHovered())
             imgui->SetTooltip("Reset to default.");
@@ -150,6 +161,8 @@ namespace
 
         if (changed && outEngineValue)
             *outEngineValue = value / scale.factor;
+        if (outCommit)
+            *outCommit = commit;
 
         return changed;
     }
@@ -174,13 +187,20 @@ namespace
         return allEqual ? vols[0] : maxV;
     }
 
-    void ApplyMasterVolume(float value)
+    // Updates the drone's live audio immediately (an atomic store, same as
+    // the loader page's own drag path); does not touch BetterDrone.ini.
+    void ApplyMasterVolumeLive(float value)
     {
         for (const char* key : kVolKeys)
-        {
-            DroneConfig::Config::WriteAudioVolume(key, value);
             DroneAudio::SetVolume(key, value);
-        }
+    }
+
+    // Writes all four volumes to BetterDrone.ini. Called once the edit is
+    // done, not on every drag step.
+    void PersistMasterVolume(float value)
+    {
+        for (const char* key : kVolKeys)
+            DroneConfig::Config::WriteAudioVolume(key, value);
     }
 
     // The four individual volumes live on the ModLoader settings page (instant
@@ -225,21 +245,27 @@ namespace
 
         float value = current;
         bool  changed = false;
+        bool  commit  = false;
 
         ui->SetNextItemWidth(sliderW);
         if (ui->SliderFloat("##slider", &value, 0.0f, 1.0f, "%.2f"))
             changed = true;
+        if (ui->IsItemDeactivatedAfterEdit())
+            commit = true;
 
         ui->SameLine(0.0f, 0.0f);
         ui->SetNextItemWidth(-1.0f);
         if (ui->InputFloat("##num", &value, 0.05f, 0.25f, "%.2f"))
             changed = true;
+        if (ui->IsItemDeactivatedAfterEdit())
+            commit = true;
 
         ui->TableSetColumnIndex(2);
         if (BetterDrone::UI::ResetButton(ui, "##reset"))
         {
             value = 1.0f;
             changed = true;
+            commit  = true;
         }
         if (ui->IsItemHovered())
             ui->SetTooltip("Reset all four volumes to 1.0.");
@@ -250,7 +276,9 @@ namespace
         {
             if (value < 0.0f) value = 0.0f;
             if (value > 1.0f) value = 1.0f;
-            ApplyMasterVolume(value);
+            ApplyMasterVolumeLive(value);
+            if (commit)
+                PersistMasterVolume(value);
         }
 
         ui->EndTable();
@@ -522,35 +550,47 @@ void RenderDronePanel(IModLoaderImGui* ui)
         ui->TableSetupColumn("", 0, 0.10f);
 
         float newSpeed = 0.0f;
+        bool  speedCommit = false;
         if (RenderScaledRow(ui, "##speed", "Drone Speed", nullptr,
                              DroneConfig::Config::ReadSpeedPerSec(), g_drone.origSpeedPerSec,
-                             kSpeedScale[unitIdx], &newSpeed))
+                             kSpeedScale[unitIdx], &newSpeed, &speedCommit))
         {
-            DroneConfig::Config::WriteSpeedPerSec(newSpeed);
+            DroneConfig::Config::SetSpeedPerSecLive(newSpeed);
+            if (speedCommit)
+                DroneConfig::Config::PersistSpeedPerSec();
         }
 
         float newAccel = 0.0f;
+        bool  accelCommit = false;
         if (RenderScaledRow(ui, "##accel", "Acceleration", "0 = instant max speed.",
                              DroneConfig::Config::ReadAcceleration(), DroneConfig::Config::DefaultAcceleration(),
-                             kRateScale[unitIdx], &newAccel))
+                             kRateScale[unitIdx], &newAccel, &accelCommit))
         {
-            DroneConfig::Config::WriteAcceleration(newAccel);
+            DroneConfig::Config::SetAccelerationLive(newAccel);
+            if (accelCommit)
+                DroneConfig::Config::PersistAcceleration();
         }
 
         float newDecel = 0.0f;
+        bool  decelCommit = false;
         if (RenderScaledRow(ui, "##decel", "Deceleration", "0 = instant stop.",
                              DroneConfig::Config::ReadDeceleration(), DroneConfig::Config::DefaultDeceleration(),
-                             kRateScale[unitIdx], &newDecel))
+                             kRateScale[unitIdx], &newDecel, &decelCommit))
         {
-            DroneConfig::Config::WriteDeceleration(newDecel);
+            DroneConfig::Config::SetDecelerationLive(newDecel);
+            if (decelCommit)
+                DroneConfig::Config::PersistDeceleration();
         }
 
         float newBoost = 0.0f;
+        bool  boostCommit = false;
         if (RenderScaledRow(ui, "##boost", "Boost Multiplier", "Speed multiplier while the Boost key is held. Set the Boost key on the ModLoader settings page.",
                              DroneConfig::Config::ReadBoostMultiplier(), DroneConfig::Config::DefaultBoostMultiplier(),
-                             kBoostScale, &newBoost))
+                             kBoostScale, &newBoost, &boostCommit))
         {
-            DroneConfig::Config::WriteBoostMultiplier(newBoost);
+            DroneConfig::Config::SetBoostMultiplierLive(newBoost);
+            if (boostCommit)
+                DroneConfig::Config::PersistBoostMultiplier();
         }
 
         ui->EndTable();
@@ -567,12 +607,15 @@ void RenderDronePanel(IModLoaderImGui* ui)
 
         float engineRadius = DroneConfig::Config::ReadMaxRadius();
         float newRadius = 0.0f;
+        bool  radiusCommit = false;
         if (RenderScaledRow(ui, "##maxr", "Max Radius", nullptr,
                              engineRadius, g_drone.origMaxRadius,
-                             kRadiusScale[unitIdx], &newRadius))
+                             kRadiusScale[unitIdx], &newRadius, &radiusCommit))
         {
-            const float radius = DroneConfig::Config::WriteMaxRadius(newRadius);
+            const float radius = DroneConfig::Config::SetMaxRadiusLive(newRadius);
             RequestMaxRadius(radius);
+            if (radiusCommit)
+                DroneConfig::Config::PersistMaxRadius();
             engineRadius = radius;
         }
 
@@ -594,12 +637,15 @@ void RenderDronePanel(IModLoaderImGui* ui)
 
         float engineHeight = DroneConfig::Config::ReadMaxHeight();
         float newHeight = 0.0f;
+        bool  heightCommit = false;
         if (RenderScaledRow(ui, "##maxh", "Max Height", nullptr,
                              engineHeight, g_drone.origMaxHeight,
-                             kHeightScale[unitIdx], &newHeight))
+                             kHeightScale[unitIdx], &newHeight, &heightCommit))
         {
-            const float height = DroneConfig::Config::WriteMaxHeight(newHeight);
+            const float height = DroneConfig::Config::SetMaxHeightLive(newHeight);
             RequestMaxHeight(height);
+            if (heightCommit)
+                DroneConfig::Config::PersistMaxHeight();
             engineHeight = height;
         }
 

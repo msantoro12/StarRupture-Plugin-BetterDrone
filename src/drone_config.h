@@ -20,20 +20,43 @@ namespace DroneConfig
         static void ReadBoostKey(char* outBuffer, int bufferSize);
 
         // Panel-only settings: stored in BetterDrone-Panel.ini, which the
-        // loader never rewrites. Write* methods clamp to sane ranges and
-        // return the value actually stored.
+        // loader never rewrites, and cached in memory (loaded once in
+        // Initialize) so the tick path never touches the file. Read* returns
+        // the cache. SetXxxLive clamps and updates the cache only -- for a
+        // slider mid-drag, where the drone should react but a disk write
+        // every frame would not. PersistXxx writes the current cached value
+        // to disk once the edit is done. WriteXxx does both, for a single
+        // action (reset button, preset).
         static float ReadSpeedPerSec();
+        static float SetSpeedPerSecLive(float value);
+        static void  PersistSpeedPerSec();
         static float WriteSpeedPerSec(float value);
+
         static float ReadMaxRadius();
+        static float SetMaxRadiusLive(float value);
+        static void  PersistMaxRadius();
         static float WriteMaxRadius(float value);
+
         static float ReadMaxHeight();
+        static float SetMaxHeightLive(float value);
+        static void  PersistMaxHeight();
         static float WriteMaxHeight(float value);
+
         static float ReadBoostMultiplier();
+        static float SetBoostMultiplierLive(float value);
+        static void  PersistBoostMultiplier();
         static float WriteBoostMultiplier(float value);
+
         static float ReadAcceleration();
+        static float SetAccelerationLive(float value);
+        static void  PersistAcceleration();
         static float WriteAcceleration(float value);
+
         static float ReadDeceleration();
+        static float SetDecelerationLive(float value);
+        static void  PersistDeceleration();
         static float WriteDeceleration(float value);
+
         static void  ReadSpeedUnit(char* outBuffer, int bufferSize);
         static void  WriteSpeedUnit(const char* unit);
 

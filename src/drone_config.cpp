@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -135,6 +136,61 @@ namespace DroneConfig
 
             MigrateString(self, "UI", "SpeedUnit", "km/h");
         }
+
+        // In-memory mirror of one panel-file float. Loaded once in
+        // Config::Initialize; every Read after that is a plain atomic load
+        // -- OnDroneTick calls several of these every tick, and the file
+        // must never be touched from there. SetLive clamps and updates the
+        // cache only, for a slider mid-drag; Persist writes the current
+        // cached value to disk, called once the edit is done rather than on
+        // every drag step.
+        class CachedFloat
+        {
+        public:
+            void Init(const char* section, const char* key, float minV, float maxV, float loaded)
+            {
+                m_section = section;
+                m_key     = key;
+                m_min     = minV;
+                m_max     = maxV;
+                m_value.store(Clamp(loaded, m_min, m_max), std::memory_order_relaxed);
+            }
+
+            float Read() const { return m_value.load(std::memory_order_relaxed); }
+
+            float SetLive(float value)
+            {
+                value = Clamp(value, m_min, m_max);
+                m_value.store(value, std::memory_order_relaxed);
+                return value;
+            }
+
+            void Persist() const
+            {
+                PanelWriteFloat(m_section, m_key, m_value.load(std::memory_order_relaxed));
+            }
+
+            float Write(float value)
+            {
+                value = SetLive(value);
+                Persist();
+                return value;
+            }
+
+        private:
+            std::atomic<float> m_value{ 0.0f };
+            const char* m_section = nullptr;
+            const char* m_key     = nullptr;
+            float m_min = 0.0f;
+            float m_max = 0.0f;
+        };
+
+        CachedFloat g_speedPerSec;
+        CachedFloat g_maxRadius;
+        CachedFloat g_maxHeight;
+        CachedFloat g_boostMultiplier;
+        CachedFloat g_acceleration;
+        CachedFloat g_deceleration;
     }
 
     IPluginSelf* Config::s_self = nullptr;
@@ -146,6 +202,19 @@ namespace DroneConfig
             return;
 
         MigratePanelSettingsIfNeeded(s_self);
+
+        g_speedPerSec.Init("Drone", "SpeedPerSec", kMinSpeedPerSec, kMaxSpeedPerSec,
+            PanelReadFloat("Drone", "SpeedPerSec", 1000.0f));
+        g_maxRadius.Init("Drone", "MaxRadius", kMinRadius, kMaxRadiusBound,
+            PanelReadFloat("Drone", "MaxRadius", 5000.0f));
+        g_maxHeight.Init("Drone", "MaxHeight", kMinHeight, kMaxHeightBound,
+            PanelReadFloat("Drone", "MaxHeight", 2000.0f));
+        g_boostMultiplier.Init("Controls", "BoostMultiplier", kMinBoostMultiplier, kMaxBoostMultiplier,
+            PanelReadFloat("Controls", "BoostMultiplier", 2.0f));
+        g_acceleration.Init("Controls", "Acceleration", 0.0f, kMaxAccelDecel,
+            PanelReadFloat("Controls", "Acceleration", 0.0f));
+        g_deceleration.Init("Controls", "Deceleration", 0.0f, kMaxAccelDecel,
+            PanelReadFloat("Controls", "Deceleration", 0.0f));
 
         static const ConfigEntry entries[] = {
             { "Drone",       "Always Allow Drone",     ConfigValueType::Boolean, "false",     "Allow the building drone to be out in places it should not be, including during environmental wave events.", 0.0f, 1.0f },
@@ -209,59 +278,35 @@ namespace DroneConfig
         }
     }
 
-    float Config::ReadSpeedPerSec() { return PanelReadFloat("Drone", "SpeedPerSec", 1000.0f); }
+    float Config::ReadSpeedPerSec()               { return g_speedPerSec.Read(); }
+    float Config::SetSpeedPerSecLive(float value)  { return g_speedPerSec.SetLive(value); }
+    void  Config::PersistSpeedPerSec()             { g_speedPerSec.Persist(); }
+    float Config::WriteSpeedPerSec(float value)    { return g_speedPerSec.Write(value); }
 
-    float Config::WriteSpeedPerSec(float value)
-    {
-        value = Clamp(value, kMinSpeedPerSec, kMaxSpeedPerSec);
-        PanelWriteFloat("Drone", "SpeedPerSec", value);
-        return value;
-    }
+    float Config::ReadMaxRadius()               { return g_maxRadius.Read(); }
+    float Config::SetMaxRadiusLive(float value)  { return g_maxRadius.SetLive(value); }
+    void  Config::PersistMaxRadius()             { g_maxRadius.Persist(); }
+    float Config::WriteMaxRadius(float value)    { return g_maxRadius.Write(value); }
 
-    float Config::ReadMaxRadius() { return PanelReadFloat("Drone", "MaxRadius", 5000.0f); }
+    float Config::ReadMaxHeight()               { return g_maxHeight.Read(); }
+    float Config::SetMaxHeightLive(float value)  { return g_maxHeight.SetLive(value); }
+    void  Config::PersistMaxHeight()             { g_maxHeight.Persist(); }
+    float Config::WriteMaxHeight(float value)    { return g_maxHeight.Write(value); }
 
-    float Config::WriteMaxRadius(float value)
-    {
-        value = Clamp(value, kMinRadius, kMaxRadiusBound);
-        PanelWriteFloat("Drone", "MaxRadius", value);
-        return value;
-    }
+    float Config::ReadBoostMultiplier()               { return g_boostMultiplier.Read(); }
+    float Config::SetBoostMultiplierLive(float value)  { return g_boostMultiplier.SetLive(value); }
+    void  Config::PersistBoostMultiplier()             { g_boostMultiplier.Persist(); }
+    float Config::WriteBoostMultiplier(float value)    { return g_boostMultiplier.Write(value); }
 
-    float Config::ReadMaxHeight() { return PanelReadFloat("Drone", "MaxHeight", 2000.0f); }
+    float Config::ReadAcceleration()               { return g_acceleration.Read(); }
+    float Config::SetAccelerationLive(float value)  { return g_acceleration.SetLive(value); }
+    void  Config::PersistAcceleration()             { g_acceleration.Persist(); }
+    float Config::WriteAcceleration(float value)    { return g_acceleration.Write(value); }
 
-    float Config::WriteMaxHeight(float value)
-    {
-        value = Clamp(value, kMinHeight, kMaxHeightBound);
-        PanelWriteFloat("Drone", "MaxHeight", value);
-        return value;
-    }
-
-    float Config::ReadBoostMultiplier() { return PanelReadFloat("Controls", "BoostMultiplier", 2.0f); }
-
-    float Config::WriteBoostMultiplier(float value)
-    {
-        value = Clamp(value, kMinBoostMultiplier, kMaxBoostMultiplier);
-        PanelWriteFloat("Controls", "BoostMultiplier", value);
-        return value;
-    }
-
-    float Config::ReadAcceleration() { return PanelReadFloat("Controls", "Acceleration", 0.0f); }
-
-    float Config::WriteAcceleration(float value)
-    {
-        value = Clamp(value, 0.0f, kMaxAccelDecel);
-        PanelWriteFloat("Controls", "Acceleration", value);
-        return value;
-    }
-
-    float Config::ReadDeceleration() { return PanelReadFloat("Controls", "Deceleration", 0.0f); }
-
-    float Config::WriteDeceleration(float value)
-    {
-        value = Clamp(value, 0.0f, kMaxAccelDecel);
-        PanelWriteFloat("Controls", "Deceleration", value);
-        return value;
-    }
+    float Config::ReadDeceleration()               { return g_deceleration.Read(); }
+    float Config::SetDecelerationLive(float value)  { return g_deceleration.SetLive(value); }
+    void  Config::PersistDeceleration()             { g_deceleration.Persist(); }
+    float Config::WriteDeceleration(float value)    { return g_deceleration.Write(value); }
 
     void Config::ReadSpeedUnit(char* outBuffer, int bufferSize)
     {
