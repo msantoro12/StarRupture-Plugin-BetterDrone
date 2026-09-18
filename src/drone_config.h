@@ -35,10 +35,9 @@ namespace DroneConfig
             s_entries[13] = { "Audio", "RotationVolume", ConfigValueType::Float, "1.0", "Drone rotation sound volume (0.0 to 1.0)",     0.0f, 1.0f };
             s_entries[14] = { "Audio", "StationVolume",  ConfigValueType::Float, "1.0", "Drone station sound volume (0.0 to 1.0)",      0.0f, 1.0f };
 
-            s_schema = { s_entries, 15 };
-
-            if (s_self)
-                s_self->config->InitializeFromSchema(s_self, &s_schema);
+            // Note: We do NOT initialize modloader UI schema here so that duplicate
+            // controls do not clutter the modloader config window; all tuning is handled
+            // in the dedicated BetterDrone panel UI window.
         }
 
         static float ReadSpeedPerSec()        { return s_self ? s_self->config->ReadFloat(s_self, "Drone", "SpeedPerSec",      0.0f)  : 0.0f;  }
@@ -55,10 +54,10 @@ namespace DroneConfig
             if (!outBuffer || bufferSize <= 0) return;
             outBuffer[0] = '\0';
             if (!s_self ||
-                !s_self->config->ReadString(s_self, "Controls", "ToggleKey", outBuffer, bufferSize, "F9") ||
+                !s_self->config->ReadString(s_self, "Controls", "ToggleKey", outBuffer, bufferSize, "F10") ||
                 outBuffer[0] == '\0')
             {
-                snprintf(outBuffer, static_cast<size_t>(bufferSize), "F9");
+                snprintf(outBuffer, static_cast<size_t>(bufferSize), "F10");
             }
         }
 
@@ -71,6 +70,26 @@ namespace DroneConfig
                 outBuffer[0] == '\0')
             {
                 snprintf(outBuffer, static_cast<size_t>(bufferSize), "LeftShift");
+            }
+        }
+
+        static void ReadSpeedUnit(char* outBuffer, int bufferSize)
+        {
+            if (!outBuffer || bufferSize <= 0) return;
+            outBuffer[0] = '\0';
+            if (!s_self ||
+                !s_self->config->ReadString(s_self, "UI", "SpeedUnit", outBuffer, bufferSize, "km/h") ||
+                outBuffer[0] == '\0')
+            {
+                snprintf(outBuffer, static_cast<size_t>(bufferSize), "km/h");
+            }
+        }
+
+        static void WriteSpeedUnit(const char* unit)
+        {
+            if (s_self && s_self->config && unit)
+            {
+                s_self->config->WriteString(s_self, "UI", "SpeedUnit", unit);
             }
         }
 

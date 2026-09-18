@@ -223,10 +223,12 @@ void RenderDronePanel(IModLoaderImGui* ui)
         }
         if (ui->IsItemHovered())
         {
-            char tooltipBuf[256];
+            char tooltipBuf[320];
+            float kmh = preset.speedPerSec * 0.036f;
+            float mph = preset.speedPerSec * 0.0223693629f;
             snprintf(tooltipBuf, sizeof(tooltipBuf),
-                "%s\n\nSpeed: %.0f cm/s | Boost: %.1fx | Accel: %.0f | Range: %.0fm H / %.0fm V%s%s",
-                preset.tooltip, preset.speedPerSec, preset.boostMultiplier, preset.acceleration,
+                "%s\n\nSpeed: %.1f km/h (%.1f mph | %.0f cm/s) | Boost: %.1fx | Accel: %.0f | Range: %.0fm H / %.0fm V%s%s",
+                preset.tooltip, kmh, mph, preset.speedPerSec, preset.boostMultiplier, preset.acceleration,
                 preset.maxRadius / 100.0f, preset.maxHeight / 100.0f,
                 preset.credit ? "\n\n" : "", preset.credit ? preset.credit : "");
             ui->SetTooltip(tooltipBuf);
@@ -234,17 +236,87 @@ void RenderDronePanel(IModLoaderImGui* ui)
     }
 
     ui->Spacing();
-    ui->SeparatorText("Movement & Tuning");
+    ui->SeparatorText("Speed Units & Movement Tuning");
 
-    float speed = *g_drone.speedPerSec;
-    ui->SetNextItemWidth(240.f);
-    if (ui->InputFloat("Speed (cm/s)##speed", &speed, 100.f, 1000.f, "%.0f"))
+    char currentUnit[16] = {};
+    DroneConfig::Config::ReadSpeedUnit(currentUnit, sizeof(currentUnit));
+
+    ui->Text("Speed Display Unit:");
+    ui->SameLine(180.0f, -1.0f);
+    if (ui->RadioButton("km/h (Metric)##unit_kmh", strcmp(currentUnit, "km/h") == 0))
     {
-        *g_drone.speedPerSec = speed;
+        DroneConfig::Config::WriteSpeedUnit("km/h");
+        snprintf(currentUnit, sizeof(currentUnit), "km/h");
+    }
+    ui->SameLine(0.0f, 10.0f);
+    if (ui->RadioButton("mph (Imperial)##unit_mph", strcmp(currentUnit, "mph") == 0))
+    {
+        DroneConfig::Config::WriteSpeedUnit("mph");
+        snprintf(currentUnit, sizeof(currentUnit), "mph");
+    }
+    ui->SameLine(0.0f, 10.0f);
+    if (ui->RadioButton("cm/s (Engine)##unit_cms", strcmp(currentUnit, "cm/s") == 0))
+    {
+        DroneConfig::Config::WriteSpeedUnit("cm/s");
+        snprintf(currentUnit, sizeof(currentUnit), "cm/s");
+    }
+
+    ui->Spacing();
+
+    float currentCms = *g_drone.speedPerSec;
+    bool speedChanged = false;
+    float newSpeedCms = currentCms;
+
+    if (strcmp(currentUnit, "mph") == 0)
+    {
+        float speedMph = currentCms * 0.0223693629f;
+        ui->SetNextItemWidth(240.f);
+        if (ui->InputFloat("Drone Speed (mph)##speed_mph", &speedMph, 5.0f, 20.0f, "%.1f mph"))
+        {
+            if (speedMph < 1.0f) speedMph = 1.0f;
+            newSpeedCms = speedMph / 0.0223693629f;
+            speedChanged = true;
+        }
+    }
+    else if (strcmp(currentUnit, "cm/s") == 0)
+    {
+        float speedCms = currentCms;
+        ui->SetNextItemWidth(240.f);
+        if (ui->InputFloat("Drone Speed (cm/s)##speed_cms", &speedCms, 100.f, 1000.f, "%.0f cm/s"))
+        {
+            if (speedCms < 100.0f) speedCms = 100.0f;
+            newSpeedCms = speedCms;
+            speedChanged = true;
+        }
+    }
+    else // Default: km/h
+    {
+        float speedKmh = currentCms * 0.036f;
+        ui->SetNextItemWidth(240.f);
+        if (ui->InputFloat("Drone Speed (km/h)##speed_kmh", &speedKmh, 5.0f, 25.0f, "%.1f km/h"))
+        {
+            if (speedKmh < 1.0f) speedKmh = 1.0f;
+            newSpeedCms = speedKmh / 0.036f;
+            speedChanged = true;
+        }
+    }
+
+    if (speedChanged)
+    {
+        *g_drone.speedPerSec = newSpeedCms;
         if (s_self && s_self->config)
-            s_self->config->WriteFloat(s_self, "Drone", "SpeedPerSec", speed);
+            s_self->config->WriteFloat(s_self, "Drone", "SpeedPerSec", newSpeedCms);
         RequestUpdateActiveDrones();
     }
+
+    char equivBuf[160];
+    snprintf(equivBuf, sizeof(equivBuf), "Equivalent: %.1f km/h  |  %.1f mph  |  %.0f cm/s",
+        (*g_drone.speedPerSec) * 0.036f,
+        (*g_drone.speedPerSec) * 0.0223693629f,
+        *g_drone.speedPerSec);
+    ui->TextDisabled(equivBuf);
+
+    ui->Spacing();
 
     float boostMult = DroneConfig::Config::ReadBoostMultiplier();
     ui->SetNextItemWidth(240.f);
@@ -293,6 +365,12 @@ void RenderDronePanel(IModLoaderImGui* ui)
             s_self->config->WriteFloat(s_self, "Drone", "MaxRadius", maxR);
         RequestUpdateActiveDrones();
     }
+    char radiusEquiv[128];
+    snprintf(radiusEquiv, sizeof(radiusEquiv), "Horizontal Range: %.1f meters  (%.0f feet)",
+        maxR / 100.0f, (maxR / 100.0f) * 3.28084f);
+    ui->TextDisabled(radiusEquiv);
+
+    ui->Spacing();
 
     float maxH = *g_drone.maxHeight;
     ui->SetNextItemWidth(240.f);
@@ -304,6 +382,10 @@ void RenderDronePanel(IModLoaderImGui* ui)
             s_self->config->WriteFloat(s_self, "Drone", "MaxHeight", maxH);
         RequestUpdateActiveDrones();
     }
+    char heightEquiv[128];
+    snprintf(heightEquiv, sizeof(heightEquiv), "Vertical Ceiling: %.1f meters  (%.0f feet)",
+        maxH / 100.0f, (maxH / 100.0f) * 3.28084f);
+    ui->TextDisabled(heightEquiv);
 
     ui->Spacing();
     ui->SeparatorText("Wave Event Rules");
