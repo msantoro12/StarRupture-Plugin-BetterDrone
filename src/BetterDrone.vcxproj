@@ -103,7 +103,6 @@
     <ClCompile Include="drone_settings.cpp" />
     <ClCompile Include="drone_ui.cpp" />
     <ClCompile Include="drone_wave_patch.cpp" />
-    <ClCompile Include="keybind_picker.cpp" />
     <!-- SDK Basic.cpp provides GObjects / GetImageBase required by GetDefaultObj() -->
     <ClCompile Include="$(StarRuptureSDKSourceDir)Basic.cpp" />
     <ClCompile Include="$(StarRuptureSDKSourceDir)CoreUObject_functions.cpp" />
@@ -118,8 +117,8 @@
     <ClInclude Include="drone_settings.h" />
     <ClInclude Include="drone_ui.h" />
     <ClInclude Include="drone_wave_patch.h" />
-    <ClInclude Include="keybind_picker.h" />
     <ClInclude Include="plugin_helpers.h" />
+    <ClInclude Include="ui_widgets.h" />
   </ItemGroup>
 
   <ItemGroup>

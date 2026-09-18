@@ -1,7 +1,8 @@
 #include "drone_ui.h"
 #include "drone_settings.h"
 #include "drone_config.h"
-#include "keybind_picker.h"
+#include "drone_audio.h"
+#include "ui_widgets.h"
 #include "plugin_helpers.h"
 #include <cstdio>
 #include <cmath>
@@ -12,6 +13,229 @@ static PanelHandle s_panelHandle = nullptr;
 static bool s_menuOpen = false;
 static void* g_inputCaptureToken = nullptr;
 static char g_registeredToggleKey[64] = {};
+
+namespace
+{
+    constexpr float kActiveEpsilon = 0.0001f;
+    constexpr int   kTableFlags = (1 << 6) | (1 << 9) | (3 << 13);
+
+    // Conversion + slider feel for one field, per display unit. Values are
+    // always stored and clamped in engine units (cm, cm/s); this only
+    // controls what the row draws and how far its slider travels.
+    struct FieldUnitScale
+    {
+        const char* format;
+        float factor;
+        float step;
+        float stepFast;
+        float sliderMin;
+        float sliderMax;
+    };
+
+    enum UnitIndex { kUnitKmh = 0, kUnitMph = 1, kUnitCms = 2, kUnitCount = 3 };
+
+    int SelectUnitIndex(const char* unit)
+    {
+        if (strcmp(unit, "mph") == 0)  return kUnitMph;
+        if (strcmp(unit, "cm/s") == 0) return kUnitCms;
+        return kUnitKmh;
+    }
+
+    constexpr FieldUnitScale kSpeedScale[kUnitCount] = {
+        { "%.1f km/h",  0.036f,        5.0f,  25.0f,  0.0f, 400.0f    },
+        { "%.1f mph",   0.0223693629f, 5.0f,  20.0f,  0.0f, 250.0f    },
+        { "%.0f cm/s",  1.0f,        100.0f, 1000.0f, 0.0f, 12000.0f  },
+    };
+
+    constexpr FieldUnitScale kRateScale[kUnitCount] = {
+        { "%.0f km/h/s", 0.036f,        10.0f, 50.0f,   0.0f, 200.0f   },
+        { "%.0f mph/s",  0.0223693629f,  5.0f, 25.0f,   0.0f, 125.0f   },
+        { "%.0f cm/s2",  1.0f,         500.0f, 2000.0f, 0.0f, 30000.0f },
+    };
+
+    constexpr FieldUnitScale kRadiusScale[kUnitCount] = {
+        { "%.1f m",  0.01f,       50.0f,  250.0f, 0.0f, 12000.0f   },
+        { "%.0f ft", 0.0328084f, 150.0f,  750.0f, 0.0f, 40000.0f   },
+        { "%.0f cm", 1.0f,       500.0f, 2500.0f, 0.0f, 1200000.0f },
+    };
+
+    constexpr FieldUnitScale kHeightScale[kUnitCount] = {
+        { "%.1f m",  0.01f,       50.0f,  250.0f, 0.0f, 6000.0f   },
+        { "%.0f ft", 0.0328084f, 150.0f,  750.0f, 0.0f, 20000.0f  },
+        { "%.0f cm", 1.0f,       500.0f, 2500.0f, 0.0f, 600000.0f },
+    };
+
+    constexpr FieldUnitScale kBoostScale = { "%.1fx", 1.0f, 0.5f, 1.0f, 1.0f, 10.0f };
+
+    constexpr const char* kVolKeys[4] = { "IdleVolume", "MovementVolume", "RotationVolume", "StationVolume" };
+
+    // Renders one label | slider+box (joined, zero spacing) | reset row for a
+    // value tracked in engine units (cm or cm/s). `scale` converts to the
+    // unit currently on display; the slider's own range is chosen to feel
+    // right in that unit and is independent of the hard clamp the typed
+    // Write* layer applies to whatever engine value is committed. Returns
+    // true and fills *outEngineValue when the row changes the value this
+    // frame (drag, typed edit, or reset).
+    bool RenderScaledRow(IModLoaderImGui* imgui, const char* rowId, const char* label,
+                          const char* tooltip, float engineValue, float engineDefault,
+                          const FieldUnitScale& scale, float* outEngineValue)
+    {
+        const bool active = std::fabs(engineValue - engineDefault) > kActiveEpsilon;
+
+        imgui->PushIDStr(rowId);
+        imgui->TableNextRow(0, 0.0f);
+
+        imgui->TableSetColumnIndex(0);
+        if (active) imgui->Text(label);
+        else        imgui->TextDisabled(label);
+        if (tooltip && imgui->IsItemHovered())
+            imgui->SetTooltip(tooltip);
+
+        imgui->TableSetColumnIndex(1);
+
+        float availX = 0.0f, availY = 0.0f;
+        imgui->GetContentRegionAvail(&availX, &availY);
+
+        char widest[40];
+        snprintf(widest, sizeof(widest), scale.format, -scale.sliderMax);
+        float textW = 0.0f, textH = 0.0f;
+        imgui->CalcTextSize(widest, &textW, &textH, false, -1.0f);
+
+        const float frameH  = imgui->GetFrameHeight();
+        const float numBoxW = textW + (frameH * 2.0f) + (frameH * 0.9f);
+        const float sliderW = (availX > numBoxW + frameH * 2.0f) ? (availX - numBoxW) : (availX * 0.55f);
+
+        float value = engineValue * scale.factor;
+        bool  changed = false;
+
+        imgui->SetNextItemWidth(sliderW);
+        if (imgui->SliderFloat("##slider", &value, scale.sliderMin, scale.sliderMax, scale.format))
+            changed = true;
+
+        imgui->SameLine(0.0f, 0.0f);
+        imgui->SetNextItemWidth(-1.0f);
+        if (imgui->InputFloat("##num", &value, scale.step, scale.stepFast, scale.format))
+            changed = true;
+
+        imgui->TableSetColumnIndex(2);
+        if (BetterDrone::UI::ResetButton(imgui, "##reset"))
+        {
+            value = engineDefault * scale.factor;
+            changed = true;
+        }
+        if (imgui->IsItemHovered())
+            imgui->SetTooltip("Reset to default.");
+
+        imgui->PopID();
+
+        if (changed && outEngineValue)
+            *outEngineValue = value / scale.factor;
+
+        return changed;
+    }
+
+    float DeriveMasterVolume(bool* outActive)
+    {
+        float vols[4];
+        for (int i = 0; i < 4; ++i)
+            vols[i] = DroneConfig::Config::ReadAudioVolume(kVolKeys[i]);
+
+        float maxV = vols[0];
+        bool allEqual = true;
+        bool anyNonDefault = false;
+        for (int i = 0; i < 4; ++i)
+        {
+            if (std::fabs(vols[i] - vols[0]) > kActiveEpsilon) allEqual = false;
+            if (vols[i] > maxV) maxV = vols[i];
+            if (std::fabs(vols[i] - 1.0f) > kActiveEpsilon) anyNonDefault = true;
+        }
+
+        if (outActive) *outActive = anyNonDefault;
+        return allEqual ? vols[0] : maxV;
+    }
+
+    void ApplyMasterVolume(float value)
+    {
+        for (const char* key : kVolKeys)
+        {
+            DroneConfig::Config::WriteAudioVolume(key, value);
+            DroneAudio::SetVolume(key, value);
+        }
+    }
+
+    // The four individual volumes live on the ModLoader settings page (instant
+    // there too, see dllmain.cpp's OnConfigChanged). This is a "set all"
+    // convenience, not a fifth value -- it derives its display from the four
+    // rather than persisting one of its own, so it can never drift out of
+    // sync with the loader page.
+    void RenderAudioSection(IModLoaderImGui* ui)
+    {
+        if (!ui->CollapsingHeader("Audio"))
+            return;
+
+        if (!ui->BeginTable("##drone_audio_table", 3, kTableFlags))
+            return;
+
+        ui->TableSetupColumn("", 0, 0.36f);
+        ui->TableSetupColumn("", 0, 0.54f);
+        ui->TableSetupColumn("", 0, 0.10f);
+
+        bool active = false;
+        const float current = DeriveMasterVolume(&active);
+
+        ui->PushIDStr("##master_vol");
+        ui->TableNextRow(0, 0.0f);
+
+        ui->TableSetColumnIndex(0);
+        if (active) ui->Text("Master Volume");
+        else        ui->TextDisabled("Master Volume");
+        if (ui->IsItemHovered())
+            ui->SetTooltip("Sets all four drone audio volumes together. Individual volumes are on the ModLoader settings page.");
+
+        ui->TableSetColumnIndex(1);
+
+        float availX = 0.0f, availY = 0.0f;
+        ui->GetContentRegionAvail(&availX, &availY);
+
+        float textW = 0.0f, textH = 0.0f;
+        ui->CalcTextSize("1.00", &textW, &textH, false, -1.0f);
+        const float frameH  = ui->GetFrameHeight();
+        const float numBoxW = textW + (frameH * 2.0f) + (frameH * 0.9f);
+        const float sliderW = (availX > numBoxW + frameH * 2.0f) ? (availX - numBoxW) : (availX * 0.55f);
+
+        float value = current;
+        bool  changed = false;
+
+        ui->SetNextItemWidth(sliderW);
+        if (ui->SliderFloat("##slider", &value, 0.0f, 1.0f, "%.2f"))
+            changed = true;
+
+        ui->SameLine(0.0f, 0.0f);
+        ui->SetNextItemWidth(-1.0f);
+        if (ui->InputFloat("##num", &value, 0.05f, 0.25f, "%.2f"))
+            changed = true;
+
+        ui->TableSetColumnIndex(2);
+        if (BetterDrone::UI::ResetButton(ui, "##reset"))
+        {
+            value = 1.0f;
+            changed = true;
+        }
+        if (ui->IsItemHovered())
+            ui->SetTooltip("Reset all four volumes to 1.0.");
+
+        ui->PopID();
+
+        if (changed)
+        {
+            if (value < 0.0f) value = 0.0f;
+            if (value > 1.0f) value = 1.0f;
+            ApplyMasterVolume(value);
+        }
+
+        ui->EndTable();
+    }
+}
 
 struct DronePreset
 {
@@ -160,24 +384,17 @@ void ToggleDroneMenu()
 
 static void ApplyPreset(const DronePreset& preset)
 {
-    if (!g_drone.valid || !s_self || !s_self->config) return;
-    auto* cfg = s_self->config;
+    if (!g_drone.valid) return;
 
-    *g_drone.speedPerSec   = preset.speedPerSec;
-    *g_drone.maxRadius     = preset.maxRadius;
-    *g_drone.warningRadius = preset.maxRadius * 0.95f;
-    *g_drone.maxHeight     = preset.maxHeight;
-    *g_drone.warningHeight = preset.maxHeight * 0.95f;
+    DroneConfig::Config::WriteSpeedPerSec(preset.speedPerSec);
+    const float radius = DroneConfig::Config::WriteMaxRadius(preset.maxRadius);
+    const float height = DroneConfig::Config::WriteMaxHeight(preset.maxHeight);
+    DroneConfig::Config::WriteBoostMultiplier(preset.boostMultiplier);
+    DroneConfig::Config::WriteAcceleration(preset.acceleration);
+    DroneConfig::Config::WriteDeceleration(preset.deceleration);
 
-    cfg->WriteFloat(s_self, "Drone", "SpeedPerSec",        preset.speedPerSec);
-    cfg->WriteFloat(s_self, "Drone", "MaxRadius",          preset.maxRadius);
-    cfg->WriteFloat(s_self, "Drone", "MaxHeight",          preset.maxHeight);
-
-    cfg->WriteFloat(s_self, "Controls", "BoostMultiplier", preset.boostMultiplier);
-    cfg->WriteFloat(s_self, "Controls", "Acceleration",    preset.acceleration);
-    cfg->WriteFloat(s_self, "Controls", "Deceleration",    preset.deceleration);
-
-    RequestUpdateActiveDrones();
+    RequestMaxRadius(radius);
+    RequestMaxHeight(height);
 }
 
 static void RenderUnavailableMessage(IModLoaderImGui* imgui, float avail_x, float avail_y, const char* message)
@@ -240,193 +457,121 @@ void RenderDronePanel(IModLoaderImGui* ui)
 
     char currentUnit[16] = {};
     DroneConfig::Config::ReadSpeedUnit(currentUnit, sizeof(currentUnit));
+    const int unitIdx = SelectUnitIndex(currentUnit);
 
-    ui->Text("Speed Display Unit:");
-    ui->SameLine(180.0f, -1.0f);
-    if (ui->RadioButton("km/h (Metric)##unit_kmh", strcmp(currentUnit, "km/h") == 0))
-    {
+    const char* unitLabel = "Speed Display Unit:";
+    float unitLabelW = 0.0f, unitLabelH = 0.0f;
+    ui->CalcTextSize(unitLabel, &unitLabelW, &unitLabelH, false, -1.0f);
+
+    ui->Text(unitLabel);
+    ui->SameLine(unitLabelW + ui->GetFrameHeight() * 0.5f, -1.0f);
+    if (ui->RadioButton("km/h (Metric)##unit_kmh", unitIdx == kUnitKmh))
         DroneConfig::Config::WriteSpeedUnit("km/h");
-        snprintf(currentUnit, sizeof(currentUnit), "km/h");
-    }
     ui->SameLine(0.0f, 10.0f);
-    if (ui->RadioButton("mph (Imperial)##unit_mph", strcmp(currentUnit, "mph") == 0))
-    {
+    if (ui->RadioButton("mph (Imperial)##unit_mph", unitIdx == kUnitMph))
         DroneConfig::Config::WriteSpeedUnit("mph");
-        snprintf(currentUnit, sizeof(currentUnit), "mph");
-    }
     ui->SameLine(0.0f, 10.0f);
-    if (ui->RadioButton("cm/s (Engine)##unit_cms", strcmp(currentUnit, "cm/s") == 0))
-    {
+    if (ui->RadioButton("cm/s (Engine)##unit_cms", unitIdx == kUnitCms))
         DroneConfig::Config::WriteSpeedUnit("cm/s");
-        snprintf(currentUnit, sizeof(currentUnit), "cm/s");
-    }
 
     ui->Spacing();
 
-    float currentCms = *g_drone.speedPerSec;
-    bool speedChanged = false;
-    float newSpeedCms = currentCms;
-
-    if (strcmp(currentUnit, "mph") == 0)
+    if (ui->BeginTable("##drone_tuning_table", 3, kTableFlags))
     {
-        float speedMph = currentCms * 0.0223693629f;
-        ui->SetNextItemWidth(240.f);
-        if (ui->InputFloat("Drone Speed (mph)##speed_mph", &speedMph, 5.0f, 20.0f, "%.1f mph"))
+        ui->TableSetupColumn("", 0, 0.36f);
+        ui->TableSetupColumn("", 0, 0.54f);
+        ui->TableSetupColumn("", 0, 0.10f);
+
+        float newSpeed = 0.0f;
+        if (RenderScaledRow(ui, "##speed", "Drone Speed", nullptr,
+                             DroneConfig::Config::ReadSpeedPerSec(), g_drone.origSpeedPerSec,
+                             kSpeedScale[unitIdx], &newSpeed))
         {
-            if (speedMph < 1.0f) speedMph = 1.0f;
-            newSpeedCms = speedMph / 0.0223693629f;
-            speedChanged = true;
+            DroneConfig::Config::WriteSpeedPerSec(newSpeed);
         }
-    }
-    else if (strcmp(currentUnit, "cm/s") == 0)
-    {
-        float speedCms = currentCms;
-        ui->SetNextItemWidth(240.f);
-        if (ui->InputFloat("Drone Speed (cm/s)##speed_cms", &speedCms, 100.f, 1000.f, "%.0f cm/s"))
+
+        float newAccel = 0.0f;
+        if (RenderScaledRow(ui, "##accel", "Acceleration", "0 = instant max speed.",
+                             DroneConfig::Config::ReadAcceleration(), DroneConfig::Config::DefaultAcceleration(),
+                             kRateScale[unitIdx], &newAccel))
         {
-            if (speedCms < 100.0f) speedCms = 100.0f;
-            newSpeedCms = speedCms;
-            speedChanged = true;
+            DroneConfig::Config::WriteAcceleration(newAccel);
         }
-    }
-    else // Default: km/h
-    {
-        float speedKmh = currentCms * 0.036f;
-        ui->SetNextItemWidth(240.f);
-        if (ui->InputFloat("Drone Speed (km/h)##speed_kmh", &speedKmh, 5.0f, 25.0f, "%.1f km/h"))
+
+        float newDecel = 0.0f;
+        if (RenderScaledRow(ui, "##decel", "Deceleration", "0 = instant stop.",
+                             DroneConfig::Config::ReadDeceleration(), DroneConfig::Config::DefaultDeceleration(),
+                             kRateScale[unitIdx], &newDecel))
         {
-            if (speedKmh < 1.0f) speedKmh = 1.0f;
-            newSpeedCms = speedKmh / 0.036f;
-            speedChanged = true;
+            DroneConfig::Config::WriteDeceleration(newDecel);
         }
+
+        float newBoost = 0.0f;
+        if (RenderScaledRow(ui, "##boost", "Boost Multiplier", "Speed multiplier while the Boost key is held. Set the Boost key on the ModLoader settings page.",
+                             DroneConfig::Config::ReadBoostMultiplier(), DroneConfig::Config::DefaultBoostMultiplier(),
+                             kBoostScale, &newBoost))
+        {
+            DroneConfig::Config::WriteBoostMultiplier(newBoost);
+        }
+
+        ui->EndTable();
     }
-
-    if (speedChanged)
-    {
-        *g_drone.speedPerSec = newSpeedCms;
-        if (s_self && s_self->config)
-            s_self->config->WriteFloat(s_self, "Drone", "SpeedPerSec", newSpeedCms);
-        RequestUpdateActiveDrones();
-    }
-
-    char equivBuf[160];
-    snprintf(equivBuf, sizeof(equivBuf), "Equivalent: %.1f km/h  |  %.1f mph  |  %.0f cm/s",
-        (*g_drone.speedPerSec) * 0.036f,
-        (*g_drone.speedPerSec) * 0.0223693629f,
-        *g_drone.speedPerSec);
-    ui->TextDisabled(equivBuf);
-
-    ui->Spacing();
-
-    float boostMult = DroneConfig::Config::ReadBoostMultiplier();
-    ui->SetNextItemWidth(240.f);
-    if (ui->InputFloat("Boost Multiplier##boostm", &boostMult, 0.5f, 1.0f, "%.1fx"))
-    {
-        if (boostMult < 1.0f) boostMult = 1.0f;
-        if (boostMult > 10.0f) boostMult = 10.0f;
-        if (s_self && s_self->config)
-            s_self->config->WriteFloat(s_self, "Controls", "BoostMultiplier", boostMult);
-    }
-    if (ui->IsItemHovered())
-        ui->SetTooltip("Speed multiplier applied when holding the Boost key (default LeftShift).");
-
-    float accel = DroneConfig::Config::ReadAcceleration();
-    ui->SetNextItemWidth(240.f);
-    if (ui->InputFloat("Acceleration (cm/s2)##accel", &accel, 500.f, 2000.f, "%.0f"))
-    {
-        if (accel < 0.0f) accel = 0.0f;
-        if (s_self && s_self->config)
-            s_self->config->WriteFloat(s_self, "Controls", "Acceleration", accel);
-    }
-    if (ui->IsItemHovered())
-        ui->SetTooltip("Acceleration rate in cm/s2. 0 = instant max speed.");
-
-    float decel = DroneConfig::Config::ReadDeceleration();
-    ui->SetNextItemWidth(240.f);
-    if (ui->InputFloat("Deceleration (cm/s2)##decel", &decel, 500.f, 2000.f, "%.0f"))
-    {
-        if (decel < 0.0f) decel = 0.0f;
-        if (s_self && s_self->config)
-            s_self->config->WriteFloat(s_self, "Controls", "Deceleration", decel);
-    }
-    if (ui->IsItemHovered())
-        ui->SetTooltip("Deceleration rate in cm/s2. 0 = instant stop.");
 
     ui->Spacing();
     ui->SeparatorText("Flight Envelope");
 
-    float maxR = *g_drone.maxRadius;
-    ui->SetNextItemWidth(240.f);
-    if (ui->InputFloat("Max Radius (cm)##maxr", &maxR, 500.f, 2500.f, "%.0f"))
+    if (ui->BeginTable("##drone_radius_table", 3, kTableFlags))
     {
-        *g_drone.maxRadius = maxR;
-        *g_drone.warningRadius = maxR * 0.95f;
-        if (s_self && s_self->config)
-            s_self->config->WriteFloat(s_self, "Drone", "MaxRadius", maxR);
-        RequestUpdateActiveDrones();
-    }
-    char radiusEquiv[128];
-    snprintf(radiusEquiv, sizeof(radiusEquiv), "Horizontal Range: %.1f meters  (%.0f feet)",
-        maxR / 100.0f, (maxR / 100.0f) * 3.28084f);
-    ui->TextDisabled(radiusEquiv);
+        ui->TableSetupColumn("", 0, 0.36f);
+        ui->TableSetupColumn("", 0, 0.54f);
+        ui->TableSetupColumn("", 0, 0.10f);
 
-    ui->Spacing();
-
-    float maxH = *g_drone.maxHeight;
-    ui->SetNextItemWidth(240.f);
-    if (ui->InputFloat("Max Height (cm)##maxh", &maxH, 500.f, 2500.f, "%.0f"))
-    {
-        *g_drone.maxHeight = maxH;
-        *g_drone.warningHeight = maxH * 0.95f;
-        if (s_self && s_self->config)
-            s_self->config->WriteFloat(s_self, "Drone", "MaxHeight", maxH);
-        RequestUpdateActiveDrones();
-    }
-    char heightEquiv[128];
-    snprintf(heightEquiv, sizeof(heightEquiv), "Vertical Ceiling: %.1f meters  (%.0f feet)",
-        maxH / 100.0f, (maxH / 100.0f) * 3.28084f);
-    ui->TextDisabled(heightEquiv);
-
-    ui->Spacing();
-    ui->SeparatorText("Wave Event Rules");
-    bool waveAllowed = DroneConfig::Config::ReadAlwaysAllowDrone();
-    if (ui->Checkbox("Allow Drone During Waves", &waveAllowed))
-    {
-        if (s_self && s_self->config)
-            s_self->config->WriteBool(s_self, "Drone", "Always Allow Drone", waveAllowed);
-    }
-    if (ui->IsItemHovered())
-        ui->SetTooltip("Allows summoning and operating the building drone while a wave defense is active.");
-
-    ui->Spacing();
-    ui->SeparatorText("Hotkeys & Keybindings");
-
-    char toggleKeyBuf[64] = {};
-    DroneConfig::Config::ReadToggleKey(toggleKeyBuf, sizeof(toggleKeyBuf));
-    ui->Text("Toggle Menu Hotkey:");
-    ui->SameLine(180.0f, -1.0f);
-    char newToggleKey[64] = {};
-    if (BetterDrone::Keybind::RenderPicker(ui, "##toggle_key_picker", toggleKeyBuf, newToggleKey, sizeof(newToggleKey)))
-    {
-        if (s_self && s_self->config)
+        float engineRadius = DroneConfig::Config::ReadMaxRadius();
+        float newRadius = 0.0f;
+        if (RenderScaledRow(ui, "##maxr", "Max Radius", nullptr,
+                             engineRadius, g_drone.origMaxRadius,
+                             kRadiusScale[unitIdx], &newRadius))
         {
-            s_self->config->WriteString(s_self, "Controls", "ToggleKey", newToggleKey);
-            RebindToggleKey();
+            const float radius = DroneConfig::Config::WriteMaxRadius(newRadius);
+            RequestMaxRadius(radius);
+            engineRadius = radius;
         }
+
+        ui->EndTable();
+
+        char radiusEquiv[128];
+        snprintf(radiusEquiv, sizeof(radiusEquiv), "Horizontal Range: %.1f m  |  %.0f ft",
+            engineRadius * 0.01f, engineRadius * 0.0328084f);
+        ui->TextDisabled(radiusEquiv);
     }
 
-    char boostKeyBuf[64] = {};
-    DroneConfig::Config::ReadBoostKey(boostKeyBuf, sizeof(boostKeyBuf));
-    ui->Text("Boost Speed Key:");
-    ui->SameLine(180.0f, -1.0f);
-    char newBoostKey[64] = {};
-    if (BetterDrone::Keybind::RenderPicker(ui, "##boost_key_picker", boostKeyBuf, newBoostKey, sizeof(newBoostKey)))
+    ui->Spacing();
+
+    if (ui->BeginTable("##drone_height_table", 3, kTableFlags))
     {
-        if (s_self && s_self->config)
+        ui->TableSetupColumn("", 0, 0.36f);
+        ui->TableSetupColumn("", 0, 0.54f);
+        ui->TableSetupColumn("", 0, 0.10f);
+
+        float engineHeight = DroneConfig::Config::ReadMaxHeight();
+        float newHeight = 0.0f;
+        if (RenderScaledRow(ui, "##maxh", "Max Height", nullptr,
+                             engineHeight, g_drone.origMaxHeight,
+                             kHeightScale[unitIdx], &newHeight))
         {
-            s_self->config->WriteString(s_self, "Controls", "BoostKey", newBoostKey);
-            RebindBoostKey();
+            const float height = DroneConfig::Config::WriteMaxHeight(newHeight);
+            RequestMaxHeight(height);
+            engineHeight = height;
         }
+
+        ui->EndTable();
+
+        char heightEquiv[128];
+        snprintf(heightEquiv, sizeof(heightEquiv), "Vertical Ceiling: %.1f m  |  %.0f ft",
+            engineHeight * 0.01f, engineHeight * 0.0328084f);
+        ui->TextDisabled(heightEquiv);
     }
+
+    ui->Spacing();
+    RenderAudioSection(ui);
 }
-

@@ -5,7 +5,6 @@
 #include "drone_audio.h"
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
-#include <Engine_classes.hpp>
 #include <windows.h>
 #include <cstring>
 #include <cstdlib>
@@ -43,11 +42,6 @@ static void OnEngineInit()
     LOG_DEBUG("OnEngineInit: CDO defaults — speed=%.0f maxRadius=%.0f maxHeight=%.0f",
         *g_drone.speedPerSec, *g_drone.maxRadius, *g_drone.maxHeight);
 
-    DroneConfig::Config::InitializeWithCDODefaults(
-        *g_drone.speedPerSec,
-        *g_drone.maxRadius,
-        *g_drone.maxHeight);
-
     *g_drone.speedPerSec   = DroneConfig::Config::ReadSpeedPerSec();
     *g_drone.maxRadius     = DroneConfig::Config::ReadMaxRadius();
     *g_drone.maxHeight     = DroneConfig::Config::ReadMaxHeight();
@@ -67,64 +61,24 @@ static void OnEngineTick(float deltaSeconds)
     DroneAudio::Tick(deltaSeconds);
 }
 
+// Fires only from the loader's own settings window, for the entries
+// registered in DroneConfig::Config::Initialize. Keybind rebinds and the
+// boolean entries are picked up live wherever they're consulted. The Audio
+// volumes are the one case with real work: the loader's slider fires this on
+// every drag frame, before the value is committed to disk, so this has to
+// parse newValue itself rather than re-read the file (GSS-9).
 static void OnConfigChanged(const char* section, const char* key, const char* newValue)
 {
-    if (!section || !key || !newValue)
+    if (!section || !key)
         return;
 
-    if (strcmp(section, "Interaction") == 0)
+    if (strcmp(section, "Audio") == 0 && newValue)
     {
-        if (strcmp(key, "Interact Key") == 0)
-            RebindInteractKey();
-        return;
-    }
-
-    if (strcmp(section, "Controls") == 0)
-    {
-        if (strcmp(key, "BoostKey") == 0)
-            RebindBoostKey();
+        DroneAudio::SetVolume(key, strtof(newValue, nullptr));
         return;
     }
 
-    if (strcmp(section, "Audio") == 0)
-    {
-        DroneAudio::OnConfigChanged(section, key, newValue);
-        return;
-    }
-
-    if (!g_drone.valid || strcmp(section, "Drone") != 0)
-        return;
-
-    const float val = strtof(newValue, nullptr);
-    LOG_DEBUG("OnConfigChanged: [%s] %s = %s", section, key, newValue);
-
-    if (strcmp(key, "SpeedPerSec") == 0)
-    {
-        *g_drone.speedPerSec = val;
-    }
-    else if (strcmp(key, "MaxRadius") == 0)
-    {
-        *g_drone.maxRadius     = val;
-        *g_drone.warningRadius = val * 0.95f;
-    }
-    else if (strcmp(key, "MaxHeight") == 0)
-    {
-        *g_drone.maxHeight     = val;
-        *g_drone.warningHeight = val * 0.95f;
-    }
-    else
-    {
-        return;
-    }
-
-    RequestUpdateActiveDrones();
-}
-
-static void OnWorldBeginPlay(SDK::UWorld*)
-{
-    LOG_DEBUG("OnWorldBeginPlay: updating active drones & applying audio config");
-    UpdateActiveDrones();
-    DroneAudio::ApplySavedConfig();
+    LOG_DEBUG("OnConfigChanged: [%s] %s updated", section, key);
 }
 
 static void OnEngineShutdown()
@@ -152,15 +106,14 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
 
     LOG_DEBUG("PluginInit: registering hooks");
 
-    DroneConfig::Config::SetSelf(self);
-    DroneAudio::Initialize(self);
+    DroneConfig::Config::Initialize(self);
+    DroneAudio::Initialize();
     InitGameSessionTracking(self);
     InitDroneUI(self);
 
     self->hooks->Engine->RegisterOnInit(OnEngineInit);
     self->hooks->Engine->RegisterOnShutdown(OnEngineShutdown);
     self->hooks->Engine->RegisterOnTick(OnEngineTick);
-    self->hooks->World->RegisterOnWorldBeginPlay(OnWorldBeginPlay);
 
     InitWavePatch();
     InitDroneInteract();
@@ -192,7 +145,6 @@ extern "C" __declspec(dllexport) void PluginShutdown()
         g_self->hooks->Engine->UnregisterOnInit(OnEngineInit);
         g_self->hooks->Engine->UnregisterOnShutdown(OnEngineShutdown);
         g_self->hooks->Engine->UnregisterOnTick(OnEngineTick);
-        g_self->hooks->World->UnregisterOnWorldBeginPlay(OnWorldBeginPlay);
 
         if (g_self->hooks->UI)
         {

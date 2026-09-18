@@ -1,12 +1,14 @@
 #pragma once
 
-#include <plugin_interface.h>
-
 namespace DroneAudio
 {
-    void Initialize(IPluginSelf* self);
+    void Initialize();
     void Shutdown();
     void Tick(float deltaSeconds);
-    void OnConfigChanged(const char* section, const char* key, const char* newValue);
     void ApplySavedConfig();
+
+    // Stores one already-known volume value (a live drag on the loader page,
+    // or the in-panel master control) straight into the atomic, without
+    // re-reading the config file. Requests the next tick apply it.
+    void SetVolume(const char* key, float value);
 }

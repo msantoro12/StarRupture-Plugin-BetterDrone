@@ -25,6 +25,8 @@ bool InitDroneSettings();
 void RestoreCDODefaults();
 void UpdateActiveDrones();
 void RequestUpdateActiveDrones();
+void RequestMaxRadius(float radiusCm);
+void RequestMaxHeight(float heightCm);
 
 bool IsInGameSession();
 void InitGameSessionTracking(IPluginSelf* self);
@@ -34,4 +36,3 @@ void OnDroneTick(float deltaSeconds);
 void SetBoostActive(bool active);
 void RegisterBoostKey(IPluginSelf* self);
 void UnregisterBoostKey(IPluginSelf* self);
-void RebindBoostKey();
