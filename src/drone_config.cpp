@@ -191,6 +191,20 @@ namespace DroneConfig
         CachedFloat g_boostMultiplier;
         CachedFloat g_acceleration;
         CachedFloat g_deceleration;
+
+        // The panel needs the unit every frame it draws, so it is cached like the
+        // floats rather than read from the file on each call.
+        const char* const kSpeedUnits[] = { "km/h", "mph", "cm/s" };
+        constexpr int kSpeedUnitCount = static_cast<int>(sizeof(kSpeedUnits) / sizeof(kSpeedUnits[0]));
+        std::atomic<int> g_speedUnit{ 0 };
+
+        int SpeedUnitIndex(const char* unit)
+        {
+            for (int i = 0; i < kSpeedUnitCount; ++i)
+                if (unit && strcmp(unit, kSpeedUnits[i]) == 0)
+                    return i;
+            return 0;
+        }
     }
 
     IPluginSelf* Config::s_self = nullptr;
@@ -215,6 +229,10 @@ namespace DroneConfig
             PanelReadFloat("Controls", "Acceleration", 0.0f));
         g_deceleration.Init("Controls", "Deceleration", 0.0f, kMaxAccelDecel,
             PanelReadFloat("Controls", "Deceleration", 0.0f));
+
+        char unit[16] = {};
+        PanelReadString("UI", "SpeedUnit", kSpeedUnits[0], unit, sizeof(unit));
+        g_speedUnit.store(SpeedUnitIndex(unit));
 
         static const ConfigEntry entries[] = {
             { "Drone",       "Always Allow Drone",     ConfigValueType::Boolean, "false",     "Allow the building drone to be out in places it should not be, including during environmental wave events.", 0.0f, 1.0f },
@@ -311,15 +329,15 @@ namespace DroneConfig
     void Config::ReadSpeedUnit(char* outBuffer, int bufferSize)
     {
         if (!outBuffer || bufferSize <= 0) return;
-        PanelReadString("UI", "SpeedUnit", "km/h", outBuffer, bufferSize);
-        if (outBuffer[0] == '\0')
-            snprintf(outBuffer, static_cast<size_t>(bufferSize), "km/h");
+        snprintf(outBuffer, static_cast<size_t>(bufferSize), "%s", kSpeedUnits[g_speedUnit.load()]);
     }
 
     void Config::WriteSpeedUnit(const char* unit)
     {
-        if (unit)
-            PanelWriteString("UI", "SpeedUnit", unit);
+        if (!unit) return;
+        const int index = SpeedUnitIndex(unit);
+        g_speedUnit.store(index);
+        PanelWriteString("UI", "SpeedUnit", kSpeedUnits[index]);
     }
 
     float Config::ReadAudioVolume(const char* key)
