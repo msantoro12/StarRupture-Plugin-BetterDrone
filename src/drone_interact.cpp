@@ -422,6 +422,20 @@ bool InitDroneInteract()
     return true;
 }
 
+bool IsLocalPlayerInDrone()
+{
+    try
+    {
+        SDK::ACrPlayerControllerBase* pc = LocalController();
+        SDK::ACrCharacterPlayerBase* character = pc ? pc->CrChar : nullptr;
+        return character && character->Status == SDK::EPlayerCharacterStatus::BuildingDrone;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
 void ShutdownDroneInteract()
 {
     auto* input = GetSelf()->hooks->Input;

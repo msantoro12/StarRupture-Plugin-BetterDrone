@@ -1,6 +1,7 @@
 #include "drone_settings.h"
 #include "drone_config.h"
 #include "drone_audio.h"
+#include "drone_interact.h"
 #include "plugin_helpers.h"
 #include <AuActorPlacement_classes.hpp>
 #include <Chimera_classes.hpp>
@@ -14,27 +15,39 @@ DroneSettings g_drone;
 
 namespace
 {
-    std::atomic<bool> g_isBoosting{ false };
+    // Set only by the keybind callback; OnDroneTick reads it and decides
+    // whether boost actually applies. The callback itself never touches
+    // UWorld/UObject state -- it may run off the game thread.
+    std::atomic<bool> g_boostKeyHeld{ false };
+
+    // Updated once per tick from the game thread, read by the keybind
+    // callback to log whether the player was in the drone at press time.
+    std::atomic<bool> g_lastKnownInDrone{ false };
+
     float g_currentEffectiveSpeed = 0.0f;
     char g_registeredBoostKey[64] = {};
     IPluginSelf* s_sessionSelf = nullptr;
     bool g_inGameSession = false;
 
+    // Game-thread-only edge-detection state for OnDroneTick.
+    bool g_wasInDrone = false;
+    bool g_boostWasActive = false;
+    bool g_loggedInstanceReport = false;
+
     void OnBoostKeyPressed(EModKey, EModKeyEvent event)
     {
-        if (event == EModKeyEvent::Pressed)
-        {
-            SetBoostActive(true);
-        }
-        else if (event == EModKeyEvent::Released)
-        {
-            SetBoostActive(false);
-        }
+        const bool held = (event == EModKeyEvent::Pressed);
+        g_boostKeyHeld.store(held, std::memory_order_relaxed);
+
+        LOG_INFO("OnBoostKeyPressed: boost key %s (in drone: %s)",
+            held ? "pressed" : "released",
+            g_lastKnownInDrone.load(std::memory_order_relaxed) ? "yes" : "no");
     }
 
     void OnWorldBeginPlay(SDK::UWorld*)
     {
         g_inGameSession = true;
+        g_loggedInstanceReport = false;
         UpdateActiveDrones();
         DroneAudio::ApplySavedConfig();
     }
@@ -143,7 +156,9 @@ void UpdateActiveDrones()
         return;
     }
 
+    int32_t found = 0;
     int32_t updated = 0;
+    int32_t sharedCdo = 0;
     const int32_t count = objects->Num();
     for (int32_t i = 0; i < count; ++i)
     {
@@ -159,6 +174,16 @@ void UpdateActiveDrones()
             continue;
         }
 
+        ++found;
+
+        // This instance points straight at the CDO -- the write already
+        // landed in InitDroneSettings/OnDroneTick, nothing more to do.
+        if (&settings->BuildingDroneSpeedPerSec == g_drone.speedPerSec)
+        {
+            ++sharedCdo;
+            continue;
+        }
+
         settings->BuildingDroneSpeedPerSec      = *g_drone.speedPerSec;
         settings->BuildingDroneMaxRadius        = *g_drone.maxRadius;
         settings->BuildingDroneWarningRadius    = *g_drone.warningRadius;
@@ -167,7 +192,15 @@ void UpdateActiveDrones()
         ++updated;
     }
 
-    LOG_DEBUG("UpdateActiveDrones: updated %d active drone(s)", updated);
+    LOG_DEBUG("UpdateActiveDrones: updated %d of %d drone instance(s), %d share the CDO settings object",
+        updated, found, sharedCdo);
+
+    if (!g_loggedInstanceReport)
+    {
+        g_loggedInstanceReport = true;
+        LOG_INFO("UpdateActiveDrones: session check -- %d drone instance(s) found, %d use the CDO settings object directly",
+            found, sharedCdo);
+    }
 }
 
 namespace
@@ -198,15 +231,17 @@ void RequestMaxHeight(float heightCm)
     RequestUpdateActiveDrones();
 }
 
-void SetBoostActive(bool active)
+void SetBoostKeyHeld(bool held)
 {
-    g_isBoosting.store(active, std::memory_order_relaxed);
+    g_boostKeyHeld.store(held, std::memory_order_relaxed);
 }
 
 void OnDroneTick(float deltaSeconds)
 {
     if (!g_drone.valid || !g_drone.speedPerSec)
         return;
+
+    bool needsInstanceUpdate = false;
 
     if (g_pendingUpdateDrones.exchange(false, std::memory_order_relaxed))
     {
@@ -222,18 +257,38 @@ void OnDroneTick(float deltaSeconds)
             *g_drone.maxHeight     = height;
             *g_drone.warningHeight = height * 0.95f;
         }
-        UpdateActiveDrones();
+        needsInstanceUpdate = true;
     }
 
+    // IsLocalPlayerInDrone() wraps its own UWorld::GetWorld() call in try/catch.
+    const bool inDrone = IsLocalPlayerInDrone();
+    g_lastKnownInDrone.store(inDrone, std::memory_order_relaxed);
+
+    if (inDrone && !g_wasInDrone)
+        needsInstanceUpdate = true;
+    g_wasInDrone = inDrone;
+
+    const bool boostActive = g_boostKeyHeld.load(std::memory_order_relaxed) && inDrone;
+
     const float baseSpeed = DroneConfig::Config::ReadSpeedPerSec();
-    const float mult = g_isBoosting.load(std::memory_order_relaxed) ? DroneConfig::Config::ReadBoostMultiplier() : 1.0f;
-    const float targetSpeed = baseSpeed * mult;
+    float targetSpeed = boostActive ? baseSpeed * DroneConfig::Config::ReadBoostMultiplier() : baseSpeed;
+    if (targetSpeed > DroneConfig::Config::MaxSpeedPerSec())
+        targetSpeed = DroneConfig::Config::MaxSpeedPerSec();
+
+    if (boostActive != g_boostWasActive)
+    {
+        g_boostWasActive = boostActive;
+        LOG_INFO("OnDroneTick: boost %s, target=%.0f cm/s",
+            boostActive ? "engaged" : "disengaged", targetSpeed);
+    }
 
     const float accel = DroneConfig::Config::ReadAcceleration();
     const float decel = DroneConfig::Config::ReadDeceleration();
 
     if (g_currentEffectiveSpeed <= 0.0f)
         g_currentEffectiveSpeed = baseSpeed;
+
+    const bool wasAtTarget = std::fabs(g_currentEffectiveSpeed - targetSpeed) <= 0.01f;
 
     if (g_currentEffectiveSpeed < targetSpeed)
     {
@@ -263,10 +318,15 @@ void OnDroneTick(float deltaSeconds)
     }
 
     if (std::fabs(*g_drone.speedPerSec - g_currentEffectiveSpeed) > 0.01f)
-    {
         *g_drone.speedPerSec = g_currentEffectiveSpeed;
+
+    // Push the interpolated value to every drone instance once the ramp (or
+    // an instant, 0-accel snap) lands on target, not on every ramp step.
+    if (!wasAtTarget && std::fabs(g_currentEffectiveSpeed - targetSpeed) <= 0.01f)
+        needsInstanceUpdate = true;
+
+    if (needsInstanceUpdate)
         UpdateActiveDrones();
-    }
 }
 
 void RegisterBoostKey(IPluginSelf* self)

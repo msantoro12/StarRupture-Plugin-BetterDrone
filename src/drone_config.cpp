@@ -15,9 +15,9 @@ namespace DroneConfig
         constexpr float kMinSpeedPerSec      = 1.0f;
         constexpr float kMaxSpeedPerSec      = 20000.0f;
         constexpr float kMinRadius           = 100.0f;
-        constexpr float kMaxRadiusBound      = 2000000.0f;
+        constexpr float kMaxRadiusBound      = 1000000.0f;
         constexpr float kMinHeight           = 100.0f;
-        constexpr float kMaxHeightBound      = 1000000.0f;
+        constexpr float kMaxHeightBound      = 500000.0f;
         constexpr float kMinBoostMultiplier  = 1.0f;
         constexpr float kMaxBoostMultiplier  = 10.0f;
         constexpr float kMaxAccelDecel       = 50000.0f;
@@ -339,6 +339,8 @@ namespace DroneConfig
         g_speedUnit.store(index);
         PanelWriteString("UI", "SpeedUnit", kSpeedUnits[index]);
     }
+
+    float Config::MaxSpeedPerSec() { return kMaxSpeedPerSec; }
 
     float Config::ReadAudioVolume(const char* key)
     {
