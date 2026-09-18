@@ -1,8 +1,9 @@
 #include "drone_audio.h"
-#include "plugin_helpers.h"
+#include "drone_config.h"
 #include <Chimera_classes.hpp>
+#include <atomic>
 #include <cmath>
-#include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace DroneAudio
@@ -14,25 +15,24 @@ namespace DroneAudio
 
         enum VolIndex : int { kVolIdle = 0, kVolMovement, kVolRotation, kVolStation, kVolCount };
 
-        struct VolDef { const char* key; const char* description; };
+        struct VolDef { const char* key; };
 
         const VolDef kVols[kVolCount] = {
-            { "IdleVolume",     "Volume multiplier for drone idle hum (0.0 to 1.0)" },
-            { "MovementVolume", "Volume multiplier for drone movement sound (0.0 to 1.0)" },
-            { "RotationVolume", "Volume multiplier for drone rotation sound (0.0 to 1.0)" },
-            { "StationVolume",  "Volume multiplier for drone station audio (0.0 to 1.0)" },
+            { "IdleVolume" },
+            { "MovementVolume" },
+            { "RotationVolume" },
+            { "StationVolume" },
         };
 
-        IPluginSelf* s_self = nullptr;
-        float g_vol[kVolCount] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        std::atomic<float> g_vol[kVolCount] = { 1.0f, 1.0f, 1.0f, 1.0f };
         float g_timer = 0.0f;
-        bool g_pendingApply = false;
+        std::atomic<bool> g_pendingApply{ false };
 
         bool IsActive()
         {
             for (int v = 0; v < kVolCount; ++v)
             {
-                if (std::fabs(g_vol[v] - 1.0f) > kActiveEpsilon)
+                if (std::fabs(g_vol[v].load(std::memory_order_relaxed) - 1.0f) > kActiveEpsilon)
                     return true;
             }
             return false;
@@ -81,9 +81,9 @@ namespace DroneAudio
                     auto* drone = static_cast<SDK::ACrCharacterDroneBase*>(actors[i]);
                     if (!drone) continue;
 
-                    SetComponentVolume(drone->IdleSound,     g_vol[kVolIdle]);
-                    SetComponentVolume(drone->MovementSound, g_vol[kVolMovement]);
-                    SetComponentVolume(drone->RotationSound, g_vol[kVolRotation]);
+                    SetComponentVolume(drone->IdleSound,     g_vol[kVolIdle].load(std::memory_order_relaxed));
+                    SetComponentVolume(drone->MovementSound, g_vol[kVolMovement].load(std::memory_order_relaxed));
+                    SetComponentVolume(drone->RotationSound, g_vol[kVolRotation].load(std::memory_order_relaxed));
                 }
             }
 
@@ -93,6 +93,7 @@ namespace DroneAudio
                 SDK::UGameplayStatics::GetAllActorsOfClass(
                     world, SDK::ACrBuildingActorBase::StaticClass(), &actors);
 
+                const float stationVol = g_vol[kVolStation].load(std::memory_order_relaxed);
                 for (int32_t i = 0; i < actors.Num(); ++i)
                 {
                     auto* building = static_cast<SDK::ACrBuildingActorBase*>(actors[i]);
@@ -100,59 +101,56 @@ namespace DroneAudio
 
                     SDK::TArray<SDK::UAudioComponent*>& sounds = building->StateAudioComponents;
                     for (int32_t s = 0; s < sounds.Num(); ++s)
-                        SetComponentVolume(sounds[s], g_vol[kVolStation]);
+                        SetComponentVolume(sounds[s], stationVol);
                 }
             }
         }
 
         void ReadAudioConfig()
         {
-            if (!s_self) return;
-
             for (int v = 0; v < kVolCount; ++v)
-            {
-                float val = s_self->config->ReadFloat(s_self, "Audio", kVols[v].key, 1.0f);
-                if (val < 0.0f) val = 0.0f;
-                if (val > 1.0f) val = 1.0f;
-                g_vol[v] = val;
-            }
+                g_vol[v].store(DroneConfig::Config::ReadAudioVolume(kVols[v].key), std::memory_order_relaxed);
         }
     }
 
-    void Initialize(IPluginSelf* self)
+    void Initialize()
     {
-        s_self = self;
         g_timer = 0.0f;
-        g_pendingApply = false;
+        g_pendingApply.store(false, std::memory_order_relaxed);
 
         ReadAudioConfig();
     }
 
     void Shutdown()
     {
-        s_self = nullptr;
     }
 
     void ApplySavedConfig()
     {
         ReadAudioConfig();
-        g_pendingApply = true;
+        g_pendingApply.store(true, std::memory_order_relaxed);
     }
 
-    void OnConfigChanged(const char* section, const char* /*key*/, const char* /*newValue*/)
+    void SetVolume(const char* key, float value)
     {
-        if (!section || strcmp(section, "Audio") != 0)
-            return;
+        if (!key) return;
 
-        ReadAudioConfig();
-        g_pendingApply = true;
+        for (int v = 0; v < kVolCount; ++v)
+        {
+            if (strcmp(kVols[v].key, key) != 0)
+                continue;
+
+            const float clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+            g_vol[v].store(clamped, std::memory_order_relaxed);
+            g_pendingApply.store(true, std::memory_order_relaxed);
+            return;
+        }
     }
 
     void Tick(float deltaSeconds)
     {
-        if (g_pendingApply)
+        if (g_pendingApply.exchange(false, std::memory_order_relaxed))
         {
-            g_pendingApply = false;
             g_timer = 0.0f;
             if (IsActive())
                 ApplyToWorld();

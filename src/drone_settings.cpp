@@ -1,10 +1,12 @@
 #include "drone_settings.h"
 #include "drone_config.h"
+#include "drone_audio.h"
 #include "plugin_helpers.h"
 #include <AuActorPlacement_classes.hpp>
 #include <Chimera_classes.hpp>
 #include <BP_FloatingDrone_classes.hpp>
 #include <Basic.hpp>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 
@@ -12,10 +14,9 @@ DroneSettings g_drone;
 
 namespace
 {
-    bool g_isBoosting = false;
+    std::atomic<bool> g_isBoosting{ false };
     float g_currentEffectiveSpeed = 0.0f;
     char g_registeredBoostKey[64] = {};
-    IPluginSelf* s_self = nullptr;
     IPluginSelf* s_sessionSelf = nullptr;
     bool g_inGameSession = false;
 
@@ -34,7 +35,8 @@ namespace
     void OnWorldBeginPlay(SDK::UWorld*)
     {
         g_inGameSession = true;
-        RequestUpdateActiveDrones();
+        UpdateActiveDrones();
+        DroneAudio::ApplySavedConfig();
     }
 
     void OnWorldEndPlay(SDK::UWorld*, const char* worldName)
@@ -168,16 +170,37 @@ void UpdateActiveDrones()
     LOG_DEBUG("UpdateActiveDrones: updated %d active drone(s)", updated);
 }
 
-static bool g_pendingUpdateDrones = false;
+namespace
+{
+    std::atomic<bool>  g_pendingUpdateDrones{ false };
+    std::atomic<bool>  g_pendingRadius{ false };
+    std::atomic<bool>  g_pendingHeight{ false };
+    std::atomic<float> g_pendingRadiusValue{ 0.0f };
+    std::atomic<float> g_pendingHeightValue{ 0.0f };
+}
 
 void RequestUpdateActiveDrones()
 {
-    g_pendingUpdateDrones = true;
+    g_pendingUpdateDrones.store(true, std::memory_order_relaxed);
+}
+
+void RequestMaxRadius(float radiusCm)
+{
+    g_pendingRadiusValue.store(radiusCm, std::memory_order_relaxed);
+    g_pendingRadius.store(true, std::memory_order_relaxed);
+    RequestUpdateActiveDrones();
+}
+
+void RequestMaxHeight(float heightCm)
+{
+    g_pendingHeightValue.store(heightCm, std::memory_order_relaxed);
+    g_pendingHeight.store(true, std::memory_order_relaxed);
+    RequestUpdateActiveDrones();
 }
 
 void SetBoostActive(bool active)
 {
-    g_isBoosting = active;
+    g_isBoosting.store(active, std::memory_order_relaxed);
 }
 
 void OnDroneTick(float deltaSeconds)
@@ -185,14 +208,25 @@ void OnDroneTick(float deltaSeconds)
     if (!g_drone.valid || !g_drone.speedPerSec)
         return;
 
-    if (g_pendingUpdateDrones)
+    if (g_pendingUpdateDrones.exchange(false, std::memory_order_relaxed))
     {
-        g_pendingUpdateDrones = false;
+        if (g_pendingRadius.exchange(false, std::memory_order_relaxed))
+        {
+            const float radius = g_pendingRadiusValue.load(std::memory_order_relaxed);
+            *g_drone.maxRadius     = radius;
+            *g_drone.warningRadius = radius * 0.95f;
+        }
+        if (g_pendingHeight.exchange(false, std::memory_order_relaxed))
+        {
+            const float height = g_pendingHeightValue.load(std::memory_order_relaxed);
+            *g_drone.maxHeight     = height;
+            *g_drone.warningHeight = height * 0.95f;
+        }
         UpdateActiveDrones();
     }
 
     const float baseSpeed = DroneConfig::Config::ReadSpeedPerSec();
-    const float mult = g_isBoosting ? DroneConfig::Config::ReadBoostMultiplier() : 1.0f;
+    const float mult = g_isBoosting.load(std::memory_order_relaxed) ? DroneConfig::Config::ReadBoostMultiplier() : 1.0f;
     const float targetSpeed = baseSpeed * mult;
 
     const float accel = DroneConfig::Config::ReadAcceleration();
@@ -237,8 +271,7 @@ void OnDroneTick(float deltaSeconds)
 
 void RegisterBoostKey(IPluginSelf* self)
 {
-    s_self = self;
-    if (!s_self || !s_self->hooks->Input)
+    if (!self || !self->hooks->Input)
         return;
 
     char keyName[64] = {};
@@ -246,8 +279,8 @@ void RegisterBoostKey(IPluginSelf* self)
     if (keyName[0] == '\0')
         return;
 
-    s_self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Pressed, OnBoostKeyPressed);
-    s_self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Released, OnBoostKeyPressed);
+    self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Pressed, OnBoostKeyPressed);
+    self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Released, OnBoostKeyPressed);
     snprintf(g_registeredBoostKey, sizeof(g_registeredBoostKey), "%s", keyName);
 }
 
@@ -259,13 +292,4 @@ void UnregisterBoostKey(IPluginSelf* self)
     self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKey, EModKeyEvent::Pressed, OnBoostKeyPressed);
     self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKey, EModKeyEvent::Released, OnBoostKeyPressed);
     g_registeredBoostKey[0] = '\0';
-}
-
-void RebindBoostKey()
-{
-    if (s_self)
-    {
-        UnregisterBoostKey(s_self);
-        RegisterBoostKey(s_self);
-    }
 }
