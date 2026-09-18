@@ -33,11 +33,8 @@ void InitGameSessionTracking(IPluginSelf* self);
 void ShutdownGameSessionTracking(IPluginSelf* self);
 
 void OnDroneTick(float deltaSeconds);
-void SetBoostKeyHeld(bool held);
 void RegisterBoostKey(IPluginSelf* self);
 void UnregisterBoostKey(IPluginSelf* self);
 
-// Re-resolves the boost key name to a VK for the GetAsyncKeyState fallback
-// (see OnDroneTick) and caches it. Call whenever the configured boost key
-// name changes: RegisterBoostKey, and OnConfigChanged for Controls/BoostKey.
+// Call whenever the boost key name changes.
 void UpdateBoostKeyCache(const char* keyName);
