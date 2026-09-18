@@ -33,6 +33,6 @@ void InitGameSessionTracking(IPluginSelf* self);
 void ShutdownGameSessionTracking(IPluginSelf* self);
 
 void OnDroneTick(float deltaSeconds);
-void SetBoostActive(bool active);
+void SetBoostKeyHeld(bool held);
 void RegisterBoostKey(IPluginSelf* self);
 void UnregisterBoostKey(IPluginSelf* self);

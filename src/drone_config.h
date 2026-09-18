@@ -60,6 +60,10 @@ namespace DroneConfig
         static void  ReadSpeedUnit(char* outBuffer, int bufferSize);
         static void  WriteSpeedUnit(const char* unit);
 
+        // Hard ceiling on cm/s reaching the CDO, base speed or boosted. The
+        // same bound Init/Write clamp the base speed to.
+        static float MaxSpeedPerSec();
+
         // Audio volumes: loader-page settings (schema-registered, instant via
         // OnConfigChanged), stored in BetterDrone.ini like the rest of this list.
         static float ReadAudioVolume(const char* key);
