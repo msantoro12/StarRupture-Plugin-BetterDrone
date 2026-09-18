@@ -37,9 +37,4 @@ void ResolveDroneInteract(IPluginSelf* self, IPluginHookScanner* scanner);
 
 bool InitDroneInteract();
 
-// Re-read [Interaction] Interact Key and move the registration to it. Call on
-// a config change: InitDroneInteract reads the key once, so without this a
-// rebind does nothing until the plugin is reloaded.
-void RebindInteractKey();
-
 void ShutdownDroneInteract();
