@@ -16,22 +16,13 @@ DroneSettings g_drone;
 
 namespace
 {
-    // Set only by the keybind callback; OnDroneTick reads it and decides
-    // whether boost actually applies. The callback itself never touches
-    // UWorld/UObject state -- it may run off the game thread.
+    // Written by the keybind callback, acted on in OnDroneTick.
     std::atomic<bool> g_boostKeyHeld{ false };
 
-    // VK of the boost key when it's a bare modifier (LeftShift etc.), 0
-    // otherwise. The ModLoader's ProcessWindowMessage never dispatches a
-    // bare modifier key to any keybind (it returns before Dispatch for
-    // VK_L/RSHIFT, VK_L/RCONTROL, VK_L/RMENU), so OnBoostKeyPressed simply
-    // never fires for the "LeftShift" default. OnDroneTick polls this VK
-    // directly as a fallback. Updated via UpdateBoostKeyCache, never read
-    // from disk on the tick.
+    // Non-zero when the boost key is a bare modifier. The loader never
+    // dispatches those to keybinds, so OnDroneTick polls this instead.
     std::atomic<int> g_boostKeyVk{ 0 };
 
-    // Updated once per tick from the game thread, read by the keybind
-    // callback to log whether the player was in the drone at press time.
     std::atomic<bool> g_lastKnownInDrone{ false };
 
     float g_currentEffectiveSpeed = 0.0f;
@@ -39,13 +30,11 @@ namespace
     IPluginSelf* s_sessionSelf = nullptr;
     bool g_inGameSession = false;
 
-    // Game-thread-only edge-detection state for OnDroneTick.
     bool g_wasInDrone = false;
     bool g_boostWasActive = false;
     bool g_loggedInstanceReport = false;
 
-    // Names the ModLoader itself binds a bare modifier key to (see
-    // keybind_registry.cpp), matched verbatim against the config string.
+    // Key names as the loader spells them in keybind_registry.cpp.
     int ResolveModifierVk(const char* keyName)
     {
         static constexpr struct { const char* name; int vk; } kModifierVks[] = {
@@ -67,8 +56,7 @@ namespace
         return 0;
     }
 
-    // True while this process owns the foreground window, so a bare
-    // modifier held while alt-tabbed away never registers as boost.
+    // GetAsyncKeyState is global -- don't boost on a Shift held in another window.
     bool GameHasFocus()
     {
         HWND fg = GetForegroundWindow();
@@ -85,9 +73,6 @@ namespace
         const bool held = (event == EModKeyEvent::Pressed);
         g_boostKeyHeld.store(held, std::memory_order_relaxed);
 
-        // Only ever fires for a non-modifier boost key (see g_boostKeyVk);
-        // LOG_INFO outside the drone would otherwise mean every sprint tap
-        // once a plain key is bound.
         if (g_lastKnownInDrone.load(std::memory_order_relaxed))
         {
             LOG_INFO("OnBoostKeyPressed: boost key %s (in drone: yes)", held ? "pressed" : "released");
@@ -230,8 +215,7 @@ void UpdateActiveDrones()
 
         ++found;
 
-        // This instance points straight at the CDO -- the write already
-        // landed in InitDroneSettings/OnDroneTick, nothing more to do.
+        // Already written through the CDO.
         if (&settings->BuildingDroneSpeedPerSec == g_drone.speedPerSec)
         {
             ++sharedCdo;
@@ -249,9 +233,7 @@ void UpdateActiveDrones()
     LOG_DEBUG("UpdateActiveDrones: updated %d of %d drone instance(s), %d share the CDO settings object",
         updated, found, sharedCdo);
 
-    // Gated on found > 0: this runs from OnWorldBeginPlay before any drone
-    // exists, and logging "0 found" there would use up the once-per-session
-    // report before it had anything to say.
+    // OnWorldBeginPlay calls this before any drone exists.
     if (!g_loggedInstanceReport && found > 0)
     {
         g_loggedInstanceReport = true;
@@ -288,11 +270,6 @@ void RequestMaxHeight(float heightCm)
     RequestUpdateActiveDrones();
 }
 
-void SetBoostKeyHeld(bool held)
-{
-    g_boostKeyHeld.store(held, std::memory_order_relaxed);
-}
-
 void UpdateBoostKeyCache(const char* keyName)
 {
     g_boostKeyVk.store(ResolveModifierVk(keyName), std::memory_order_relaxed);
@@ -322,7 +299,6 @@ void OnDroneTick(float deltaSeconds)
         needsInstanceUpdate = true;
     }
 
-    // IsLocalPlayerInDrone() wraps its own UWorld::GetWorld() call in try/catch.
     const bool inDrone = IsLocalPlayerInDrone();
     g_lastKnownInDrone.store(inDrone, std::memory_order_relaxed);
 
@@ -330,11 +306,6 @@ void OnDroneTick(float deltaSeconds)
         needsInstanceUpdate = true;
     g_wasInDrone = inDrone;
 
-    // The ModLoader never dispatches a bare modifier key to keybinds (see
-    // g_boostKeyVk), so the "LeftShift" default never reaches
-    // OnBoostKeyPressed. Poll it directly, only while the drone is out
-    // (nowhere else needs it) and only with the game in the foreground, so
-    // holding Shift in another window never engages boost.
     bool held = g_boostKeyHeld.load(std::memory_order_relaxed);
     if (!held && inDrone)
     {
@@ -394,8 +365,7 @@ void OnDroneTick(float deltaSeconds)
     if (std::fabs(*g_drone.speedPerSec - g_currentEffectiveSpeed) > 0.01f)
         *g_drone.speedPerSec = g_currentEffectiveSpeed;
 
-    // Push the interpolated value to every drone instance once the ramp (or
-    // an instant, 0-accel snap) lands on target, not on every ramp step.
+    // Walking GObjects every ramp step is too slow; sync instances once it lands.
     if (!wasAtTarget && std::fabs(g_currentEffectiveSpeed - targetSpeed) <= 0.01f)
         needsInstanceUpdate = true;
 
