@@ -109,8 +109,6 @@
     <ClCompile Include="$(StarRuptureSDKSourceDir)CoreUObject_functions.cpp" />
     <ClCompile Include="$(StarRuptureSDKSourceDir)Engine_functions.cpp" />
     <ClCompile Include="$(StarRuptureSDKSourceDir)Chimera_functions.cpp" />
-    <!-- EnhancedInput_functions.cpp provides QueryKeysMappedToAction, used to resolve the Sprint key -->
-    <ClCompile Include="$(StarRuptureSDKSourceDir)EnhancedInput_functions.cpp" />
   </ItemGroup>
 
   <ItemGroup>
