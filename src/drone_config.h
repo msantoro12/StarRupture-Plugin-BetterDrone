@@ -3,6 +3,11 @@
 
 namespace DroneConfig
 {
+    // BoostKey's value when boost follows the game's own Sprint binding
+    // instead of a custom keybind. The one spelling shared by the schema
+    // default, the migration, and drone_settings.cpp's registration check.
+    constexpr const char* kBoostKeyFollowsSprint = "Sprint";
+
     class Config
     {
     public:
@@ -17,6 +22,9 @@ namespace DroneConfig
         static bool ReadInteractInDroneMode();
         static void ReadInteractKey(char* outBuffer, int bufferSize);
         static void ReadToggleKey(char* outBuffer, int bufferSize);
+
+        // kBoostKeyFollowsSprint means "follow the game's Sprint key"; any
+        // other value is a custom combo. Never empty.
         static void ReadBoostKey(char* outBuffer, int bufferSize);
 
         // Panel-only settings: stored in BetterDrone-Panel.ini, which the
