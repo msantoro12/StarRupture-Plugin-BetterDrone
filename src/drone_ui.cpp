@@ -294,7 +294,10 @@ namespace
     }
 }
 
-struct DronePreset
+// Speed and range used to come as one bundled preset; split so either axis
+// can be picked independently (e.g. Better Construction speed with a
+// Map-wide range).
+struct SpeedPreset
 {
     const char* label;
     const char* tooltip;
@@ -303,37 +306,69 @@ struct DronePreset
     float boostMultiplier;
     float acceleration;
     float deceleration;
+};
+
+struct RangePreset
+{
+    const char* label;
+    const char* tooltip;
+    const char* credit;
     float maxRadius;
     float maxHeight;
 };
 
-static const DronePreset k_presets[] = {
+static const SpeedPreset k_speedPresets[] = {
     { "Stock",
-      "Default un-modded StarRupture building drone limits.",
+      "Default un-modded StarRupture building drone speed.",
       "Game Default",
-      1000.0f, 2.0f, 0.0f, 0.0f, 5000.0f, 2000.0f },
+      1000.0f, 2.0f, 0.0f, 0.0f },
 
     { "Better Construction",
-      "Modelled on 'Better Construction Drone' by CrazyCovin -- 2.5x speed, fast acceleration & double range.",
+      "Modelled on 'Better Construction Drone' by CrazyCovin -- 2.5x speed & fast acceleration.",
       "Modelled on NexusMod #27 by CrazyCovin",
-      2500.0f, 2.5f, 5000.0f, 5000.0f, 10000.0f, 5000.0f },
+      2500.0f, 2.5f, 5000.0f, 5000.0f },
 
     { "Agile Builder",
-      "High speed, rapid response, and expanded flight envelope for mega-base building.",
+      "High speed and rapid response for mega-base building.",
       "GSS Preset",
-      4000.0f, 3.0f, 10000.0f, 10000.0f, 20000.0f, 10000.0f },
+      4000.0f, 3.0f, 10000.0f, 10000.0f },
 
     { "Ludicrous Speed",
       "Supercharged drone: ultra-fast travel and heavy boost multiplier.",
       "GSS Preset",
-      8000.0f, 4.0f, 20000.0f, 20000.0f, 50000.0f, 25000.0f },
+      8000.0f, 4.0f, 20000.0f, 20000.0f },
 
     { "Infinite Range",
-      "Map-wide construction envelope: build anywhere across the planet without height or distance restrictions.",
+      "Moderate speed and boost for long-range trips -- pair with the Map-wide range preset below for full planet coverage.",
       "GSS Preset",
-      5000.0f, 3.0f, 12000.0f, 12000.0f, 1000000.0f, 500000.0f }
+      5000.0f, 3.0f, 12000.0f, 12000.0f }
 };
-constexpr int k_presetCount = static_cast<int>(sizeof(k_presets) / sizeof(k_presets[0]));
+constexpr int k_speedPresetCount = static_cast<int>(sizeof(k_speedPresets) / sizeof(k_speedPresets[0]));
+
+// Every entry stays within kMaxRadiusBound/kMaxHeightBound (drone_config.cpp);
+// Map-wide sits exactly at that ceiling.
+static const RangePreset k_rangePresets[] = {
+    { "Stock",
+      "Default un-modded StarRupture building drone range.",
+      "Game Default",
+      5000.0f, 2000.0f },
+
+    { "Better Construction",
+      "Modelled on 'Better Construction Drone' by CrazyCovin -- double range.",
+      "Modelled on NexusMod #27 by CrazyCovin",
+      10000.0f, 5000.0f },
+
+    { "Agile Builder",
+      "Expanded flight envelope for mega-base building.",
+      "GSS Preset",
+      20000.0f, 10000.0f },
+
+    { "Map-wide",
+      "Build anywhere across the planet -- the same ceiling as NexusMod #27's 'Unlimited'.",
+      "Modelled on NexusMod #27 by CrazyCovin",
+      1000000.0f, 500000.0f }
+};
+constexpr int k_rangePresetCount = static_cast<int>(sizeof(k_rangePresets) / sizeof(k_rangePresets[0]));
 
 static void OnToggleKeyPressed(EModKey, EModKeyEvent event)
 {
@@ -454,16 +489,22 @@ void ToggleDroneMenu()
     }
 }
 
-static void ApplyPreset(const DronePreset& preset)
+static void ApplySpeedPreset(const SpeedPreset& preset)
 {
     if (!g_drone.valid) return;
 
     DroneConfig::Config::WriteSpeedPerSec(preset.speedPerSec);
-    const float radius = DroneConfig::Config::WriteMaxRadius(preset.maxRadius);
-    const float height = DroneConfig::Config::WriteMaxHeight(preset.maxHeight);
     DroneConfig::Config::WriteBoostMultiplier(preset.boostMultiplier);
     DroneConfig::Config::WriteAcceleration(preset.acceleration);
     DroneConfig::Config::WriteDeceleration(preset.deceleration);
+}
+
+static void ApplyRangePreset(const RangePreset& preset)
+{
+    if (!g_drone.valid) return;
+
+    const float radius = DroneConfig::Config::WriteMaxRadius(preset.maxRadius);
+    const float height = DroneConfig::Config::WriteMaxHeight(preset.maxHeight);
 
     RequestMaxRadius(radius);
     RequestMaxHeight(height);
@@ -512,18 +553,18 @@ void RenderDronePanel(IModLoaderImGui* ui)
         return;
     }
 
-    ui->SeparatorText("Presets");
-    ui->TextDisabled("Select a preset modelled on classic construction drone mods:");
+    ui->SeparatorText("Speed Units & Movement Tuning");
+    ui->TextDisabled("Speed presets modelled on classic construction drone mods:");
     ui->Spacing();
 
-    for (int i = 0; i < k_presetCount; ++i)
+    for (int i = 0; i < k_speedPresetCount; ++i)
     {
-        const auto& preset = k_presets[i];
+        const auto& preset = k_speedPresets[i];
         if (i > 0) ui->SameLine(0.0f, -1.0f);
 
         if (ui->SmallButton(preset.label))
         {
-            ApplyPreset(preset);
+            ApplySpeedPreset(preset);
         }
         if (ui->IsItemHovered())
         {
@@ -531,16 +572,14 @@ void RenderDronePanel(IModLoaderImGui* ui)
             float kmh = preset.speedPerSec * 0.036f;
             float mph = preset.speedPerSec * 0.0223693629f;
             snprintf(tooltipBuf, sizeof(tooltipBuf),
-                "%s\n\nSpeed: %.1f km/h (%.1f mph | %.0f cm/s) | Boost: %.1fx | Accel: %.0f | Range: %.0fm H / %.0fm V%s%s",
+                "%s\n\nSpeed: %.1f km/h (%.1f mph | %.0f cm/s) | Boost: %.1fx | Accel: %.0f%s%s",
                 preset.tooltip, kmh, mph, preset.speedPerSec, preset.boostMultiplier, preset.acceleration,
-                preset.maxRadius / 100.0f, preset.maxHeight / 100.0f,
                 preset.credit ? "\n\n" : "", preset.credit ? preset.credit : "");
             ui->SetTooltip(tooltipBuf);
         }
     }
 
     ui->Spacing();
-    ui->SeparatorText("Speed Units & Movement Tuning");
 
     char currentUnit[16] = {};
     DroneConfig::Config::ReadSpeedUnit(currentUnit, sizeof(currentUnit));
@@ -618,6 +657,31 @@ void RenderDronePanel(IModLoaderImGui* ui)
 
     ui->Spacing();
     ui->SeparatorText("Flight Envelope");
+    ui->TextDisabled("Range presets modelled on classic construction drone mods:");
+    ui->Spacing();
+
+    for (int i = 0; i < k_rangePresetCount; ++i)
+    {
+        const auto& preset = k_rangePresets[i];
+        if (i > 0) ui->SameLine(0.0f, -1.0f);
+
+        if (ui->SmallButton(preset.label))
+        {
+            ApplyRangePreset(preset);
+        }
+        if (ui->IsItemHovered())
+        {
+            char tooltipBuf[320];
+            snprintf(tooltipBuf, sizeof(tooltipBuf),
+                "%s\n\nRange: %.0f m H / %.0f m V (%.0f ft H / %.0f ft V)%s%s",
+                preset.tooltip, preset.maxRadius / 100.0f, preset.maxHeight / 100.0f,
+                preset.maxRadius * 0.0328084f, preset.maxHeight * 0.0328084f,
+                preset.credit ? "\n\n" : "", preset.credit ? preset.credit : "");
+            ui->SetTooltip(tooltipBuf);
+        }
+    }
+
+    ui->Spacing();
 
     if (ui->BeginTable("##drone_radius_table", 3, kTableFlags))
     {
