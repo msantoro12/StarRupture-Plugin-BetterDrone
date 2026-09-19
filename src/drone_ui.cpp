@@ -20,23 +20,32 @@ namespace
     constexpr float kActiveEpsilon = 0.0001f;
     constexpr int   kTableFlags = (1 << 6) | (1 << 9) | (3 << 13);
 
-    // ImGuiFocusedFlags_RootWindow (1<<1) | ImGuiFocusedFlags_ChildWindows (1<<0),
-    // from StarRupture-ImGui/imgui/imgui.h. True while this panel or any of its
-    // children has focus, so Escape closes only the panel being looked at.
-    constexpr int kFocusedRootAndChildWindows = 3;
+    std::atomic<bool> g_closeRequested{ false };
 
-    std::atomic<bool> g_escapeCloseRequested{ false };
-
-    // Escape is a universal dismiss key, not a per-plugin setting, so it is
-    // registered by enum rather than by name and never appears on the loader
-    // config page. The callback's thread isn't guaranteed, so it only raises
-    // a flag; RenderDronePanel does the actual close from the render thread.
-    void OnEscapePressed(EModKey, EModKeyEvent event)
+    // Escape and Q (the game's own close/cancel key) are universal dismiss
+    // keys, not a per-plugin setting, so both are registered by enum rather
+    // than by name and neither appears on the loader config page. Simple
+    // enum registrations like these are never in the loader's blocking map
+    // (only a config-schema Keybind entry's own Blocking checkbox can put a
+    // combo there), so Q still reaches the game normally whether or not
+    // this panel is open.
+    //
+    // The callback's thread isn't guaranteed, so it only raises a flag;
+    // RenderDronePanel does the actual close from the render thread. The
+    // owner runs BetterCheats and BetterDrone panels open together on F10,
+    // and only one can hold ImGui focus at a time -- gating the close on
+    // focus (as this once did) silently dropped the request for whichever
+    // panel didn't have it. Closing whenever the panel is open, regardless
+    // of focus, is what actually dismisses both.
+    void OnCloseKeyPressed(EModKey, EModKeyEvent event)
     {
         if (event != EModKeyEvent::Pressed)
             return;
-        if (s_menuOpen.load(std::memory_order_relaxed))
-            g_escapeCloseRequested.store(true, std::memory_order_relaxed);
+
+        const bool open = s_menuOpen.load(std::memory_order_relaxed);
+        LOG_DEBUG("OnCloseKeyPressed: close key received (open: %s)", open ? "yes" : "no");
+        if (open)
+            g_closeRequested.store(true, std::memory_order_relaxed);
     }
 
     // Conversion + slider feel for one field, per display unit. Values are
@@ -361,7 +370,10 @@ void InitDroneUI(IPluginSelf* self)
     self->hooks->UI->RegisterOnPanelWindowClosed(OnPanelClosed);
 
     if (self->hooks->Input)
-        self->hooks->Input->RegisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, OnEscapePressed);
+    {
+        self->hooks->Input->RegisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, OnCloseKeyPressed);
+        self->hooks->Input->RegisterKeybind(EModKey::Q, EModKeyEvent::Pressed, OnCloseKeyPressed);
+    }
 
     RebindToggleKey();
 }
@@ -371,7 +383,10 @@ void ShutdownDroneUI(IPluginSelf*)
     if (s_self && s_self->hooks)
     {
         if (s_self->hooks->Input)
-            s_self->hooks->Input->UnregisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, OnEscapePressed);
+        {
+            s_self->hooks->Input->UnregisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, OnCloseKeyPressed);
+            s_self->hooks->Input->UnregisterKeybind(EModKey::Q, EModKeyEvent::Pressed, OnCloseKeyPressed);
+        }
 
         if (g_registeredToggleKey[0] != '\0' && s_self->hooks->Input)
         {
@@ -424,7 +439,7 @@ void ToggleDroneMenu()
 
     if (opening)
     {
-        g_escapeCloseRequested.store(false, std::memory_order_relaxed);
+        g_closeRequested.store(false, std::memory_order_relaxed);
         s_self->hooks->UI->SetPanelOpen(s_panelHandle);
         g_inputCaptureToken = s_self->hooks->UI->AcquireInputCapture();
     }
@@ -467,11 +482,16 @@ static void RenderUnavailableMessage(IModLoaderImGui* imgui, float avail_x, floa
 
 void RenderDronePanel(IModLoaderImGui* ui)
 {
-    // Deferred by one frame: closing here, inside the same Escape keypress
-    // that requested it, could release input capture in time for that same
-    // press to also reach the game's own pause menu.
-    if (g_escapeCloseRequested.exchange(false, std::memory_order_relaxed) &&
-        ui->IsWindowFocused(kFocusedRootAndChildWindows))
+    // Deferred by one frame: closing here, inside the same keypress that
+    // requested it, could release input capture in time for that same
+    // press to also reach the game's own pause menu. No focus check --
+    // several panels (BetterCheats, BetterDrone) are typically open at
+    // once and only one can hold ImGui focus, so gating the close on focus
+    // silently dropped it for whichever panel didn't have it. Closing
+    // whenever the panel is open dismisses it regardless of which one the
+    // player was actually looking at.
+    if (g_closeRequested.exchange(false, std::memory_order_relaxed) &&
+        s_menuOpen.load(std::memory_order_relaxed))
     {
         ToggleDroneMenu();
         return;
