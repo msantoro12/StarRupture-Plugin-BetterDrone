@@ -311,7 +311,7 @@ static const SpeedPreset k_speedPresets[] = {
       "GSS Preset",
       8000.0f, 4.0f, 20000.0f, 20000.0f },
 
-    { "Infinite Range",
+    { "Long Haul",
       "Moderate speed and boost for long-range trips -- pair with the Map-wide range preset below for full planet coverage.",
       "GSS Preset",
       5000.0f, 3.0f, 12000.0f, 12000.0f }
@@ -530,6 +530,10 @@ void RenderDronePanel(IModLoaderImGui* ui)
     ui->TextDisabled("Speed presets modelled on classic construction drone mods:");
     ui->Spacing();
 
+    // Speed and range presets share button labels (Stock, Better
+    // Construction, Agile Builder) in the same window -- ImGui derives a
+    // widget's ID from its label, so the two loops would otherwise collide.
+    ui->PushIDStr("speed_presets");
     for (int i = 0; i < k_speedPresetCount; ++i)
     {
         const auto& preset = k_speedPresets[i];
@@ -551,6 +555,7 @@ void RenderDronePanel(IModLoaderImGui* ui)
             ui->SetTooltip(tooltipBuf);
         }
     }
+    ui->PopID();
 
     ui->Spacing();
 
@@ -633,6 +638,7 @@ void RenderDronePanel(IModLoaderImGui* ui)
     ui->TextDisabled("Range presets modelled on classic construction drone mods:");
     ui->Spacing();
 
+    ui->PushIDStr("range_presets");
     for (int i = 0; i < k_rangePresetCount; ++i)
     {
         const auto& preset = k_rangePresets[i];
@@ -653,6 +659,7 @@ void RenderDronePanel(IModLoaderImGui* ui)
             ui->SetTooltip(tooltipBuf);
         }
     }
+    ui->PopID();
 
     ui->Spacing();
 
