@@ -80,7 +80,10 @@ static void OnConfigChanged(const char* section, const char* key, const char* ne
 
     if (strcmp(section, "Controls") == 0 && strcmp(key, "BoostKey") == 0)
     {
-        UpdateBoostKeyCache(newValue);
+        // Re-register from scratch rather than rely on the loader's own
+        // live-rebind patch: it matches by exact combo string, and Released
+        // is registered under the bare base key, not the full combo.
+        RebindBoostKey(g_self, newValue);
         LOG_DEBUG("OnConfigChanged: BoostKey rebound to '%s'", newValue ? newValue : "");
         return;
     }

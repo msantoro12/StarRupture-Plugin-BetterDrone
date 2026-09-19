@@ -36,5 +36,13 @@ void OnDroneTick(float deltaSeconds);
 void RegisterBoostKey(IPluginSelf* self);
 void UnregisterBoostKey(IPluginSelf* self);
 
+// Unregisters the current boost key and registers newKeyName in its place.
+// Call from a live rebind (OnConfigChanged for Controls/BoostKey) instead
+// of relying on the loader's own UpdateKeybindByName, which only patches a
+// registration whose stored combo string matches the old value exactly --
+// the Released half is registered under the bare base key, not the full
+// combo, so it wouldn't be found.
+void RebindBoostKey(IPluginSelf* self, const char* newKeyName);
+
 // Call whenever the boost key name changes.
 void UpdateBoostKeyCache(const char* keyName);
