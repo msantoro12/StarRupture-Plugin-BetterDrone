@@ -26,7 +26,13 @@ namespace
     std::atomic<bool> g_lastKnownInDrone{ false };
 
     float g_currentEffectiveSpeed = 0.0f;
-    char g_registeredBoostKey[64] = {};
+
+    // The two names actually registered: Pressed on the full combo, Released
+    // on its bare base key (see RegisterBoostKeyName). Kept separately so
+    // Unregister always matches what was registered.
+    char g_registeredBoostKeyPressed[64]  = {};
+    char g_registeredBoostKeyReleased[64] = {};
+
     IPluginSelf* s_sessionSelf = nullptr;
     bool g_inGameSession = false;
 
@@ -56,6 +62,18 @@ namespace
         return 0;
     }
 
+    // The text after the last '+' in a combo string ("Shift+K" -> "K"),
+    // or the whole string when there's no modifier prefix.
+    void ExtractBaseKey(const char* combo, char* outBuf, size_t outSize)
+    {
+        const char* base = combo ? combo : "";
+        const char* lastPlus = std::strrchr(base, '+');
+        if (lastPlus)
+            base = lastPlus + 1;
+
+        snprintf(outBuf, outSize, "%s", base);
+    }
+
     // GetAsyncKeyState is global -- don't boost on a Shift held in another window.
     bool GameHasFocus()
     {
@@ -81,6 +99,25 @@ namespace
         {
             LOG_DEBUG("OnBoostKeyPressed: boost key %s (in drone: no)", held ? "pressed" : "released");
         }
+    }
+
+    // A named combo's Released only fires on an exact modifier match
+    // (DispatchCombo), so "Shift+K" never sees a Released if the player
+    // lets go of Shift before K -- the key would read stuck held. The bare
+    // base key has no modifier requirement and always fires on release.
+    void RegisterBoostKeyName(IPluginSelf* self, const char* keyName)
+    {
+        if (!self || !self->hooks->Input || !keyName || !keyName[0])
+            return;
+
+        char baseKey[64] = {};
+        ExtractBaseKey(keyName, baseKey, sizeof(baseKey));
+
+        self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Pressed, OnBoostKeyPressed);
+        self->hooks->Input->RegisterKeybindByName(baseKey, EModKeyEvent::Released, OnBoostKeyPressed);
+        snprintf(g_registeredBoostKeyPressed, sizeof(g_registeredBoostKeyPressed), "%s", keyName);
+        snprintf(g_registeredBoostKeyReleased, sizeof(g_registeredBoostKeyReleased), "%s", baseKey);
+        UpdateBoostKeyCache(keyName);
     }
 
     void OnWorldBeginPlay(SDK::UWorld*)
@@ -380,21 +417,25 @@ void RegisterBoostKey(IPluginSelf* self)
 
     char keyName[64] = {};
     DroneConfig::Config::ReadBoostKey(keyName, sizeof(keyName));
-    if (keyName[0] == '\0')
-        return;
-
-    self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Pressed, OnBoostKeyPressed);
-    self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Released, OnBoostKeyPressed);
-    snprintf(g_registeredBoostKey, sizeof(g_registeredBoostKey), "%s", keyName);
-    UpdateBoostKeyCache(keyName);
+    RegisterBoostKeyName(self, keyName);
 }
 
 void UnregisterBoostKey(IPluginSelf* self)
 {
-    if (!self || !self->hooks->Input || g_registeredBoostKey[0] == '\0')
+    if (!self || !self->hooks->Input)
         return;
 
-    self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKey, EModKeyEvent::Pressed, OnBoostKeyPressed);
-    self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKey, EModKeyEvent::Released, OnBoostKeyPressed);
-    g_registeredBoostKey[0] = '\0';
+    if (g_registeredBoostKeyPressed[0] != '\0')
+        self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKeyPressed, EModKeyEvent::Pressed, OnBoostKeyPressed);
+    if (g_registeredBoostKeyReleased[0] != '\0')
+        self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKeyReleased, EModKeyEvent::Released, OnBoostKeyPressed);
+
+    g_registeredBoostKeyPressed[0]  = '\0';
+    g_registeredBoostKeyReleased[0] = '\0';
+}
+
+void RebindBoostKey(IPluginSelf* self, const char* newKeyName)
+{
+    UnregisterBoostKey(self);
+    RegisterBoostKeyName(self, newKeyName);
 }
