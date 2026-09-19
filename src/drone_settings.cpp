@@ -2,6 +2,7 @@
 #include "drone_config.h"
 #include "drone_audio.h"
 #include "drone_interact.h"
+#include "drone_sprint_key.h"
 #include "plugin_helpers.h"
 #include <AuActorPlacement_classes.hpp>
 #include <Chimera_classes.hpp>
@@ -19,9 +20,17 @@ namespace
     // Written by the keybind callback, acted on in OnDroneTick.
     std::atomic<bool> g_boostKeyHeld{ false };
 
-    // Non-zero when the boost key is a bare modifier. The loader never
-    // dispatches those to keybinds, so OnDroneTick polls this instead.
+    // Non-zero when OnDroneTick has to poll for the boost key itself rather
+    // than rely on the loader's dispatch: either a bare-modifier custom key
+    // (the loader never dispatches those to keybinds) or, whenever BoostKey
+    // is DroneConfig::kBoostKeyFollowsSprint, whatever key currently drives
+    // the game's own Sprint action.
     std::atomic<int> g_boostKeyVk{ 0 };
+
+    // True when BoostKey is DroneConfig::kBoostKeyFollowsSprint and boost is
+    // following the resolved Sprint key instead of a registered custom
+    // keybind.
+    std::atomic<bool> g_boostFollowsSprint{ false };
 
     std::atomic<bool> g_lastKnownInDrone{ false };
 
@@ -101,14 +110,49 @@ namespace
         }
     }
 
+    // Resolves the game's current Sprint key and caches its VK for
+    // OnDroneTick to poll -- following Sprint registers no keybind with the
+    // loader, so nothing else would dispatch it. Falls back to LeftShift,
+    // logged once, if the Sprint action or its binding cannot be found (no
+    // world yet, gamepad-only, etc.); a later re-resolve picks up the real
+    // key once one is available.
+    void ResolveAndCacheSprintKey()
+    {
+        char keyName[64] = {};
+        int vk = ResolveSprintVk(keyName, sizeof(keyName));
+        if (vk == 0)
+        {
+            vk = VK_LSHIFT;
+            snprintf(keyName, sizeof(keyName), "LeftShift");
+            LOG_WARN("ResolveAndCacheSprintKey: could not resolve the game's Sprint key, falling back to LeftShift");
+        }
+
+        g_boostKeyVk.store(vk, std::memory_order_relaxed);
+        LOG_INFO("boost key: following Sprint (%s)", keyName);
+    }
+
     // A named combo's Released only fires on an exact modifier match
     // (DispatchCombo), so "Shift+K" never sees a Released if the player
     // lets go of Shift before K -- the key would read stuck held. The bare
     // base key has no modifier requirement and always fires on release.
+    //
+    // keyName == kBoostKeyFollowsSprint is not a real key: nothing is
+    // registered with the loader for it, and OnDroneTick's poll of
+    // g_boostKeyVk (kept fed by ResolveAndCacheSprintKey) stands in for
+    // dispatch instead.
     void RegisterBoostKeyName(IPluginSelf* self, const char* keyName)
     {
         if (!self || !self->hooks->Input || !keyName || !keyName[0])
             return;
+
+        if (strcmp(keyName, DroneConfig::kBoostKeyFollowsSprint) == 0)
+        {
+            g_boostFollowsSprint.store(true, std::memory_order_relaxed);
+            ResolveAndCacheSprintKey();
+            return;
+        }
+
+        g_boostFollowsSprint.store(false, std::memory_order_relaxed);
 
         char baseKey[64] = {};
         ExtractBaseKey(keyName, baseKey, sizeof(baseKey));
@@ -118,6 +162,7 @@ namespace
         snprintf(g_registeredBoostKeyPressed, sizeof(g_registeredBoostKeyPressed), "%s", keyName);
         snprintf(g_registeredBoostKeyReleased, sizeof(g_registeredBoostKeyReleased), "%s", baseKey);
         UpdateBoostKeyCache(keyName);
+        LOG_INFO("boost key: custom (%s)", keyName);
     }
 
     void OnWorldBeginPlay(SDK::UWorld*)
@@ -126,6 +171,11 @@ namespace
         g_loggedInstanceReport = false;
         UpdateActiveDrones();
         DroneAudio::ApplySavedConfig();
+
+        // Picks up an in-game rebind of Sprint made while no drone session
+        // was active to observe it via the enter-drone edge below.
+        if (g_boostFollowsSprint.load(std::memory_order_relaxed))
+            ResolveAndCacheSprintKey();
     }
 
     void OnWorldEndPlay(SDK::UWorld*, const char* worldName)
@@ -158,7 +208,7 @@ void InitGameSessionTracking(IPluginSelf* self)
     catch (...) {}
 }
 
-void ShutdownGameSessionTracking(IPluginSelf* self)
+void ShutdownGameSessionTracking(IPluginSelf*)
 {
     if (s_sessionSelf && s_sessionSelf->hooks && s_sessionSelf->hooks->World)
     {
@@ -340,7 +390,13 @@ void OnDroneTick(float deltaSeconds)
     g_lastKnownInDrone.store(inDrone, std::memory_order_relaxed);
 
     if (inDrone && !g_wasInDrone)
+    {
         needsInstanceUpdate = true;
+
+        // Picks up an in-game rebind of Sprint made mid-session.
+        if (g_boostFollowsSprint.load(std::memory_order_relaxed))
+            ResolveAndCacheSprintKey();
+    }
     g_wasInDrone = inDrone;
 
     bool held = g_boostKeyHeld.load(std::memory_order_relaxed);
