@@ -10,9 +10,9 @@ namespace
 {
     // UE FKey names this plugin turns into a VK to poll: letters, digits,
     // function keys, the six modifiers, a few named keyboard keys, and the
-    // five mouse buttons -- the realistic set QueryKeysMappedToAction can
-    // return for a keyboard-and-mouse Sprint binding. Anything else (a
-    // gamepad key, most likely) is left for the next candidate.
+    // five mouse buttons -- the realistic set for a keyboard-and-mouse
+    // Sprint binding. Anything else (a gamepad key, most likely) is left
+    // for the next candidate.
     int VkFromKeyName(const std::string& name)
     {
         if (name.size() == 1 && name[0] >= 'A' && name[0] <= 'Z')
@@ -44,6 +44,9 @@ namespace
     // which UCrInputSprint is one) with their UInputAction. Scanned by
     // handler class rather than by the action's own object name, which is
     // content-authored and not something this plugin should have to guess.
+    // Plain data reads only (GObjects walk, IsA, TArray indexing) -- no
+    // UFunction call, so nothing here can hit the null-Func crash class
+    // described below.
     SDK::UInputAction* FindSprintInputAction()
     {
         auto* objects = SDK::UObject::GObjects.GetTypedPtr();
@@ -77,6 +80,16 @@ namespace
     }
 }
 
+// Deliberately reads applied mappings off UEnhancedPlayerInput rather than
+// calling IEnhancedInputSubsystemInterface::QueryKeysMappedToAction: that
+// Dumper-7 wrapper resolves its UFunction with
+// AsUObject()->Class->GetFunction("EnhancedInputSubsystemInterface", ...),
+// but an interface's UFunctions are never in the *implementing* class's own
+// super chain, so the lookup returns null and the wrapper's unchecked
+// Func->FunctionFlags dereferences a null pointer -- an access violation,
+// which try/catch cannot catch, crashing the game every time boost tried to
+// follow Sprint. EnhancedActionMappings is data on an object already in
+// hand, so no UFunction call -- and no version of this crash -- is possible.
 int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize)
 {
     if (outKeyName && outKeyNameSize > 0)
@@ -92,26 +105,26 @@ int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize)
         if (!pc)
             return 0;
 
-        SDK::ULocalPlayerSubsystem* subsystem =
-            SDK::USubsystemBlueprintLibrary::GetLocalPlayerSubSystemFromPlayerController(
-                pc, SDK::UEnhancedInputLocalPlayerSubsystem::StaticClass());
-        if (!subsystem)
+        SDK::UPlayerInput* playerInput = pc->PlayerInput;
+        if (!playerInput || !playerInput->IsA(SDK::UEnhancedPlayerInput::StaticClass()))
             return 0;
+
+        auto* enhancedInput = static_cast<SDK::UEnhancedPlayerInput*>(playerInput);
 
         SDK::UInputAction* sprintAction = FindSprintInputAction();
         if (!sprintAction)
             return 0;
 
-        // IEnhancedInputSubsystemInterface is a Dumper-7 native-interface
-        // wrapper: no vtable or members of its own, just methods that call
-        // back through the UObject they are cast from.
-        auto* iface = reinterpret_cast<SDK::IEnhancedInputSubsystemInterface*>(subsystem);
-        SDK::TArray<SDK::FKey> keys = iface->QueryKeysMappedToAction(sprintAction);
-
-        const int32_t keyCount = keys.Num();
-        for (int32_t i = 0; i < keyCount; ++i)
+        // The live applied mappings, so an in-game Sprint rebind shows up
+        // here without any extra work on this plugin's part.
+        const int32_t mappingCount = enhancedInput->EnhancedActionMappings.Num();
+        for (int32_t i = 0; i < mappingCount; ++i)
         {
-            const std::string name = keys[i].KeyName.ToString();
+            const SDK::FEnhancedActionKeyMapping& mapping = enhancedInput->EnhancedActionMappings[i];
+            if (mapping.Action != sprintAction)
+                continue;
+
+            const std::string name = mapping.Key.KeyName.ToString();
             const int vk = VkFromKeyName(name);
             if (vk == 0)
                 continue;
