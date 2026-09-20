@@ -351,17 +351,38 @@ static void OnToggleKeyPressed(EModKey, EModKeyEvent event)
     }
 }
 
+// Applies "closed" to this plugin's own state -- s_menuOpen false, capture
+// token released -- idempotently. Every close path funnels through this
+// (never a raw flip), so a second close signal for an already-closed panel,
+// from any source, is a guaranteed no-op instead of a reopen.
+static void ApplyMenuClosed(const char* reason)
+{
+    if (!s_menuOpen.exchange(false, std::memory_order_relaxed))
+    {
+        LOG_DEBUG("ApplyMenuClosed(%s): already closed, ignoring", reason);
+        return;
+    }
+
+    LOG_DEBUG("ApplyMenuClosed(%s): closing", reason);
+    if (g_inputCaptureToken)
+    {
+        LOG_DEBUG("ApplyMenuClosed(%s): releasing capture token %p", reason, g_inputCaptureToken);
+        if (s_self && s_self->hooks && s_self->hooks->UI)
+            s_self->hooks->UI->ReleaseInputCapture(g_inputCaptureToken);
+        g_inputCaptureToken = nullptr;
+    }
+}
+
+// The loader's own notification that our panel closed -- its titlebar X, or
+// (redundantly, harmlessly) our own SetPanelClose call cascading back here.
+// Never touches the registry itself; only reconciles our side.
 static void OnPanelClosed(PanelHandle handle)
 {
-    if (handle == s_panelHandle)
-    {
-        s_menuOpen.store(false, std::memory_order_relaxed);
-        if (s_self && g_inputCaptureToken)
-        {
-            s_self->hooks->UI->ReleaseInputCapture(g_inputCaptureToken);
-            g_inputCaptureToken = nullptr;
-        }
-    }
+    if (handle != s_panelHandle)
+        return;
+
+    LOG_DEBUG("OnPanelClosed: loader reports the panel closed");
+    ApplyMenuClosed("OnPanelClosed");
 }
 
 void InitDroneUI(IPluginSelf* self)
@@ -405,11 +426,7 @@ void ShutdownDroneUI(IPluginSelf*)
         if (s_panelHandle && s_self->hooks->UI)
         {
             s_self->hooks->UI->SetPanelClose(s_panelHandle);
-            if (g_inputCaptureToken)
-            {
-                s_self->hooks->UI->ReleaseInputCapture(g_inputCaptureToken);
-                g_inputCaptureToken = nullptr;
-            }
+            ApplyMenuClosed("ShutdownDroneUI");
             s_self->hooks->UI->UnregisterOnPanelWindowClosed(OnPanelClosed);
             s_self->hooks->UI->UnregisterPanel(s_panelHandle);
             s_panelHandle = nullptr;
@@ -438,27 +455,69 @@ void RebindToggleKey()
     }
 }
 
-void ToggleDroneMenu()
+// Idempotent: no-op if already open. Never call this from a close path.
+static void OpenDroneMenu()
 {
     if (!s_panelHandle || !s_self || !s_self->hooks || !s_self->hooks->UI) return;
 
-    const bool opening = !s_menuOpen.load(std::memory_order_relaxed);
-    s_menuOpen.store(opening, std::memory_order_relaxed);
-
-    if (opening)
+    if (s_menuOpen.exchange(true, std::memory_order_relaxed))
     {
-        g_closeRequested.store(false, std::memory_order_relaxed);
-        s_self->hooks->UI->SetPanelOpen(s_panelHandle);
-        g_inputCaptureToken = s_self->hooks->UI->AcquireInputCapture();
+        LOG_DEBUG("OpenDroneMenu: already open, ignoring");
+        return;
     }
+
+    g_closeRequested.store(false, std::memory_order_relaxed);
+    s_self->hooks->UI->SetPanelOpen(s_panelHandle);
+    g_inputCaptureToken = s_self->hooks->UI->AcquireInputCapture();
+    LOG_DEBUG("OpenDroneMenu: opened, capture token %p", g_inputCaptureToken);
+}
+
+// Idempotent: no-op if already closed (ApplyMenuClosed's own guard). Tells
+// the loader first -- SetPanelClose synchronously cascades into
+// OnPanelClosed/ApplyMenuClosed when the registry agrees the panel was
+// open, but calling ApplyMenuClosed here too covers the panel already
+// having gone stale in the registry for any reason.
+static void CloseDroneMenu()
+{
+    if (!s_panelHandle || !s_self || !s_self->hooks || !s_self->hooks->UI) return;
+    if (!s_menuOpen.load(std::memory_order_relaxed)) return;
+
+    LOG_DEBUG("CloseDroneMenu: requesting SetPanelClose");
+    s_self->hooks->UI->SetPanelClose(s_panelHandle);
+    ApplyMenuClosed("CloseDroneMenu");
+}
+
+// The deliberate user action (the configured toggle key): flip which one of
+// Open/Close applies. This is the only path allowed to choose between them
+// -- every other path (Escape/Q, the loader's own close notification,
+// shutdown) always calls CloseDroneMenu, never this.
+void ToggleDroneMenu()
+{
+    if (s_menuOpen.load(std::memory_order_relaxed))
+        CloseDroneMenu();
     else
+        OpenDroneMenu();
+}
+
+// Applies a pending Escape/Q close request. Called from the game tick (via
+// OnEngineTick) rather than from RenderDronePanel: the loader's
+// RenderPanelWindows snapshots each panel's isOpen into a local bool BEFORE
+// calling our render function and writes that same stale local back to the
+// registry AFTER it returns (plugin_panel_registry.cpp, RenderPanelWindows)
+// -- so a SetPanelClose called from inside our own render callback closes
+// the panel for an instant and then the loader's own snapshot silently
+// reopens it one statement later. That's the flicker: the window closing
+// and immediately springing back open, left with a released capture token
+// but a panel the registry still considers open, which is what stopped
+// Escape/Q from working again afterwards. Applying the close from the tick
+// instead means it lands on a call stack RenderPanelWindows is never nested
+// inside, so there is nothing left for it to stomp.
+void TickDroneMenuClose()
+{
+    if (g_closeRequested.exchange(false, std::memory_order_relaxed))
     {
-        s_self->hooks->UI->SetPanelClose(s_panelHandle);
-        if (g_inputCaptureToken)
-        {
-            s_self->hooks->UI->ReleaseInputCapture(g_inputCaptureToken);
-            g_inputCaptureToken = nullptr;
-        }
+        LOG_DEBUG("TickDroneMenuClose: applying a pending close request");
+        CloseDroneMenu();
     }
 }
 
@@ -496,21 +555,11 @@ static void RenderUnavailableMessage(IModLoaderImGui* imgui, float avail_x, floa
 
 void RenderDronePanel(IModLoaderImGui* ui)
 {
-    // Deferred by one frame: closing here, inside the same keypress that
-    // requested it, could release input capture in time for that same
-    // press to also reach the game's own pause menu. No focus check --
-    // several panels (BetterCheats, BetterDrone) are typically open at
-    // once and only one can hold ImGui focus, so gating the close on focus
-    // silently dropped it for whichever panel didn't have it. Closing
-    // whenever the panel is open dismisses it regardless of which one the
-    // player was actually looking at.
-    if (g_closeRequested.exchange(false, std::memory_order_relaxed) &&
-        s_menuOpen.load(std::memory_order_relaxed))
-    {
-        ToggleDroneMenu();
-        return;
-    }
-
+    // A pending Escape/Q close is applied from TickDroneMenuClose (the game
+    // tick), not here -- see its comment for why closing from inside this
+    // render callback caused the close to silently undo itself one frame
+    // later. By the time this runs, the loader will simply not have called
+    // it at all for a frame where the close already landed.
     float avail_x = 0.0f, avail_y = 0.0f;
     ui->GetContentRegionAvail(&avail_x, &avail_y);
 
