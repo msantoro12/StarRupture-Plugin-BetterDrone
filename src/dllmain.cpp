@@ -59,6 +59,7 @@ static void OnEngineTick(float deltaSeconds)
 {
     OnDroneTick(deltaSeconds);
     DroneAudio::Tick(deltaSeconds);
+    TickDroneMenuClose();
 }
 
 // Fires only from the loader's own settings window, for the entries
