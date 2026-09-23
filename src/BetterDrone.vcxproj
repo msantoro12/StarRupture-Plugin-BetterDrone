@@ -101,6 +101,7 @@
     <ClCompile Include="drone_config.cpp" />
     <ClCompile Include="drone_interact.cpp" />
     <ClCompile Include="drone_settings.cpp" />
+    <ClCompile Include="drone_sprint_key.cpp" />
     <ClCompile Include="drone_ui.cpp" />
     <ClCompile Include="drone_wave_patch.cpp" />
     <!-- SDK Basic.cpp provides GObjects / GetImageBase required by GetDefaultObj() -->
@@ -115,6 +116,7 @@
     <ClInclude Include="drone_config.h" />
     <ClInclude Include="drone_interact.h" />
     <ClInclude Include="drone_settings.h" />
+    <ClInclude Include="drone_sprint_key.h" />
     <ClInclude Include="drone_ui.h" />
     <ClInclude Include="drone_wave_patch.h" />
     <ClInclude Include="plugin_helpers.h" />
