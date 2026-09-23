@@ -321,7 +321,9 @@ static const SpeedPreset k_speedPresets[] = {
     { "Stock",
       "Default un-modded StarRupture building drone speed.",
       "Game Default",
-      1000.0f, 2.0f, 0.0f, 0.0f },
+      // 4000.0f matches DroneConfig's own accel/decel floor (drone_config.cpp,
+      // kMinAccelDecel) rather than 0, which no longer means instant.
+      1000.0f, 2.0f, 4000.0f, 4000.0f },
 
     { "Better Construction",
       "Modelled on 'Better Construction Drone' by CrazyCovin -- 2.5x speed & fast acceleration.",
@@ -953,7 +955,7 @@ void RenderDronePanel(IModLoaderImGui* ui)
 
         float newAccel = 0.0f;
         bool  accelCommit = false;
-        if (RenderScaledRow(ui, "##accel", "Acceleration", "0 = instant max speed.",
+        if (RenderScaledRow(ui, "##accel", "Acceleration", "How fast the drone ramps up to boosted speed. Never instant.",
                              DroneConfig::Config::ReadAcceleration(), DroneConfig::Config::DefaultAcceleration(),
                              kRateScale[unitIdx], &newAccel, &accelCommit))
         {
@@ -964,7 +966,7 @@ void RenderDronePanel(IModLoaderImGui* ui)
 
         float newDecel = 0.0f;
         bool  decelCommit = false;
-        if (RenderScaledRow(ui, "##decel", "Deceleration", "0 = instant stop.",
+        if (RenderScaledRow(ui, "##decel", "Deceleration", "How fast the drone ramps back down when boost releases. Never instant.",
                              DroneConfig::Config::ReadDeceleration(), DroneConfig::Config::DefaultDeceleration(),
                              kRateScale[unitIdx], &newDecel, &decelCommit))
         {

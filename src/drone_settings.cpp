@@ -425,6 +425,9 @@ void OnDroneTick(float deltaSeconds)
             boostActive ? "engaged" : "disengaged", targetSpeed);
     }
 
+    // Acceleration/Deceleration are clamped to a floor above 0 (DroneConfig,
+    // kMinAccelDecel), so there is no longer a snap path here to fall back
+    // to -- every speed change, boost or otherwise, ramps.
     const float accel = DroneConfig::Config::ReadAcceleration();
     const float decel = DroneConfig::Config::ReadDeceleration();
 
@@ -435,29 +438,15 @@ void OnDroneTick(float deltaSeconds)
 
     if (g_currentEffectiveSpeed < targetSpeed)
     {
-        if (accel > 0.0f)
-        {
-            g_currentEffectiveSpeed += accel * deltaSeconds;
-            if (g_currentEffectiveSpeed > targetSpeed)
-                g_currentEffectiveSpeed = targetSpeed;
-        }
-        else
-        {
+        g_currentEffectiveSpeed += accel * deltaSeconds;
+        if (g_currentEffectiveSpeed > targetSpeed)
             g_currentEffectiveSpeed = targetSpeed;
-        }
     }
     else if (g_currentEffectiveSpeed > targetSpeed)
     {
-        if (decel > 0.0f)
-        {
-            g_currentEffectiveSpeed -= decel * deltaSeconds;
-            if (g_currentEffectiveSpeed < targetSpeed)
-                g_currentEffectiveSpeed = targetSpeed;
-        }
-        else
-        {
+        g_currentEffectiveSpeed -= decel * deltaSeconds;
+        if (g_currentEffectiveSpeed < targetSpeed)
             g_currentEffectiveSpeed = targetSpeed;
-        }
     }
 
     if (std::fabs(*g_drone.speedPerSec - g_currentEffectiveSpeed) > 0.01f)
