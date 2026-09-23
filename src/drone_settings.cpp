@@ -3,6 +3,7 @@
 #include "drone_audio.h"
 #include "drone_interact.h"
 #include "drone_sprint_key.h"
+#include "drone_key_vk.h"
 #include "plugin_helpers.h"
 #include <AuActorPlacement_classes.hpp>
 #include <Chimera_classes.hpp>
@@ -20,11 +21,12 @@ namespace
     // Written by the keybind callback, acted on in OnDroneTick.
     std::atomic<bool> g_boostKeyHeld{ false };
 
-    // Non-zero when OnDroneTick has to poll for the boost key itself rather
-    // than rely on the loader's dispatch: either a bare-modifier custom key
-    // (the loader never dispatches those to keybinds) or, whenever BoostKey
-    // is DroneConfig::kBoostKeyFollowsSprint, whatever key currently drives
-    // the game's own Sprint action.
+    // The custom key's VK (KeyNameToVk), or, whenever BoostKey is
+    // DroneConfig::kBoostKeyFollowsSprint, the resolved Sprint key's VK.
+    // OnDroneTick polls this as a fallback alongside the loader's own
+    // dispatch -- needed outright for a bare modifier, which the loader
+    // never dispatches to keybinds, and for Sprint mode, which registers
+    // no keybind with the loader at all.
     std::atomic<int> g_boostKeyVk{ 0 };
 
     // True when BoostKey is DroneConfig::kBoostKeyFollowsSprint and boost is
@@ -48,28 +50,6 @@ namespace
     bool g_wasInDrone = false;
     bool g_boostWasActive = false;
     bool g_loggedInstanceReport = false;
-
-    // Key names as the loader spells them in keybind_registry.cpp.
-    int ResolveModifierVk(const char* keyName)
-    {
-        static constexpr struct { const char* name; int vk; } kModifierVks[] = {
-            { "LeftShift",    VK_LSHIFT   },
-            { "RightShift",   VK_RSHIFT   },
-            { "LeftControl",  VK_LCONTROL },
-            { "RightControl", VK_RCONTROL },
-            { "LeftAlt",      VK_LMENU    },
-            { "RightAlt",     VK_RMENU    },
-        };
-
-        if (!keyName)
-            return 0;
-
-        for (const auto& entry : kModifierVks)
-            if (std::strcmp(keyName, entry.name) == 0)
-                return entry.vk;
-
-        return 0;
-    }
 
     // The text after the last '+' in a combo string ("Shift+K" -> "K"),
     // or the whole string when there's no modifier prefix.
@@ -331,11 +311,38 @@ void UpdateActiveDrones()
 
 namespace
 {
-    std::atomic<bool>  g_pendingUpdateDrones{ false };
-    std::atomic<bool>  g_pendingRadius{ false };
-    std::atomic<bool>  g_pendingHeight{ false };
-    std::atomic<float> g_pendingRadiusValue{ 0.0f };
-    std::atomic<float> g_pendingHeightValue{ 0.0f };
+    // One requested value plus a dirty flag: set from any thread (the UI
+    // render thread, here), consumed once and cleared by TakeIfPending,
+    // called from the game thread only. Replaces a bespoke atomic<bool> +
+    // atomic<float> pair per field.
+    class PendingFloat
+    {
+    public:
+        void Request(float value)
+        {
+            m_value.store(value, std::memory_order_relaxed);
+            m_pending.store(true, std::memory_order_relaxed);
+        }
+
+        // Returns true and fills *outValue if a request was pending,
+        // clearing it either way.
+        bool TakeIfPending(float* outValue)
+        {
+            if (!m_pending.exchange(false, std::memory_order_relaxed))
+                return false;
+            if (outValue)
+                *outValue = m_value.load(std::memory_order_relaxed);
+            return true;
+        }
+
+    private:
+        std::atomic<bool>  m_pending{ false };
+        std::atomic<float> m_value{ 0.0f };
+    };
+
+    std::atomic<bool> g_pendingUpdateDrones{ false };
+    PendingFloat      g_pendingRadius;
+    PendingFloat      g_pendingHeight;
 }
 
 void RequestUpdateActiveDrones()
@@ -345,21 +352,19 @@ void RequestUpdateActiveDrones()
 
 void RequestMaxRadius(float radiusCm)
 {
-    g_pendingRadiusValue.store(radiusCm, std::memory_order_relaxed);
-    g_pendingRadius.store(true, std::memory_order_relaxed);
+    g_pendingRadius.Request(radiusCm);
     RequestUpdateActiveDrones();
 }
 
 void RequestMaxHeight(float heightCm)
 {
-    g_pendingHeightValue.store(heightCm, std::memory_order_relaxed);
-    g_pendingHeight.store(true, std::memory_order_relaxed);
+    g_pendingHeight.Request(heightCm);
     RequestUpdateActiveDrones();
 }
 
 void UpdateBoostKeyCache(const char* keyName)
 {
-    g_boostKeyVk.store(ResolveModifierVk(keyName), std::memory_order_relaxed);
+    g_boostKeyVk.store(KeyNameToVk(keyName), std::memory_order_relaxed);
 }
 
 void OnDroneTick(float deltaSeconds)
@@ -371,15 +376,15 @@ void OnDroneTick(float deltaSeconds)
 
     if (g_pendingUpdateDrones.exchange(false, std::memory_order_relaxed))
     {
-        if (g_pendingRadius.exchange(false, std::memory_order_relaxed))
+        float radius = 0.0f;
+        if (g_pendingRadius.TakeIfPending(&radius))
         {
-            const float radius = g_pendingRadiusValue.load(std::memory_order_relaxed);
             *g_drone.maxRadius     = radius;
             *g_drone.warningRadius = radius * 0.95f;
         }
-        if (g_pendingHeight.exchange(false, std::memory_order_relaxed))
+        float height = 0.0f;
+        if (g_pendingHeight.TakeIfPending(&height))
         {
-            const float height = g_pendingHeightValue.load(std::memory_order_relaxed);
             *g_drone.maxHeight     = height;
             *g_drone.warningHeight = height * 0.95f;
         }
