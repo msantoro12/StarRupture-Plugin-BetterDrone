@@ -399,7 +399,7 @@ void InitDroneUI(IPluginSelf* self)
     RebindToggleKey();
 }
 
-void ShutdownDroneUI(IPluginSelf* self)
+void ShutdownDroneUI(IPluginSelf*)
 {
     if (s_self && s_self->hooks)
     {
