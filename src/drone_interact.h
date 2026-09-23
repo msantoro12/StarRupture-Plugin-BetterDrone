@@ -37,9 +37,10 @@ void ResolveDroneInteract(IPluginSelf* self, IPluginHookScanner* scanner);
 
 bool InitDroneInteract();
 
-// Re-read [Interaction] Interact Key and move the registration to it. Call on
-// a config change: InitDroneInteract reads the key once, so without this a
-// rebind does nothing until the plugin is reloaded.
-void RebindInteractKey();
-
 void ShutdownDroneInteract();
+
+// True if the local player's character is currently flying the building
+// drone. Game-thread only -- touches UWorld/UObject state. Shared with
+// drone_settings.cpp so boost gating and the interact hooks agree on what
+// "in the drone" means.
+bool IsLocalPlayerInDrone();
