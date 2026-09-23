@@ -1,11 +1,97 @@
 #include "drone_settings.h"
+#include "drone_config.h"
+#include "drone_audio.h"
+#include "drone_interact.h"
 #include "plugin_helpers.h"
 #include <AuActorPlacement_classes.hpp>
 #include <Chimera_classes.hpp>
 #include <BP_FloatingDrone_classes.hpp>
 #include <Basic.hpp>
+#include <atomic>
+#include <cmath>
+#include <cstring>
 
 DroneSettings g_drone;
+
+namespace
+{
+    // Set only by the keybind callback; OnDroneTick reads it and decides
+    // whether boost actually applies. The callback itself never touches
+    // UWorld/UObject state -- it may run off the game thread.
+    std::atomic<bool> g_boostKeyHeld{ false };
+
+    // Updated once per tick from the game thread, read by the keybind
+    // callback to log whether the player was in the drone at press time.
+    std::atomic<bool> g_lastKnownInDrone{ false };
+
+    float g_currentEffectiveSpeed = 0.0f;
+    char g_registeredBoostKey[64] = {};
+    IPluginSelf* s_sessionSelf = nullptr;
+    bool g_inGameSession = false;
+
+    // Game-thread-only edge-detection state for OnDroneTick.
+    bool g_wasInDrone = false;
+    bool g_boostWasActive = false;
+    bool g_loggedInstanceReport = false;
+
+    void OnBoostKeyPressed(EModKey, EModKeyEvent event)
+    {
+        const bool held = (event == EModKeyEvent::Pressed);
+        g_boostKeyHeld.store(held, std::memory_order_relaxed);
+
+        LOG_INFO("OnBoostKeyPressed: boost key %s (in drone: %s)",
+            held ? "pressed" : "released",
+            g_lastKnownInDrone.load(std::memory_order_relaxed) ? "yes" : "no");
+    }
+
+    void OnWorldBeginPlay(SDK::UWorld*)
+    {
+        g_inGameSession = true;
+        g_loggedInstanceReport = false;
+        UpdateActiveDrones();
+        DroneAudio::ApplySavedConfig();
+    }
+
+    void OnWorldEndPlay(SDK::UWorld*, const char* worldName)
+    {
+        if (worldName && std::strcmp(worldName, "ChimeraMain") == 0)
+            g_inGameSession = false;
+    }
+}
+
+bool IsInGameSession()
+{
+    return g_inGameSession;
+}
+
+void InitGameSessionTracking(IPluginSelf* self)
+{
+    s_sessionSelf = self;
+    if (!self || !self->hooks || !self->hooks->World)
+        return;
+
+    self->hooks->World->RegisterOnWorldBeginPlay(OnWorldBeginPlay);
+    self->hooks->World->RegisterOnAfterWorldEndPlay(OnWorldEndPlay);
+
+    try
+    {
+        SDK::UWorld* world = SDK::UWorld::GetWorld();
+        if (world && world->GetName() == "ChimeraMain")
+            g_inGameSession = true;
+    }
+    catch (...) {}
+}
+
+void ShutdownGameSessionTracking(IPluginSelf* self)
+{
+    if (s_sessionSelf && s_sessionSelf->hooks && s_sessionSelf->hooks->World)
+    {
+        s_sessionSelf->hooks->World->UnregisterOnWorldBeginPlay(OnWorldBeginPlay);
+        s_sessionSelf->hooks->World->UnregisterOnAfterWorldEndPlay(OnWorldEndPlay);
+    }
+    s_sessionSelf = nullptr;
+    g_inGameSession = false;
+}
 
 bool InitDroneSettings()
 {
@@ -30,6 +116,7 @@ bool InitDroneSettings()
     g_drone.origMaxHeight     = *g_drone.maxHeight;
     g_drone.origWarningHeight = *g_drone.warningHeight;
     g_drone.valid             = true;
+    g_currentEffectiveSpeed   = *g_drone.speedPerSec;
 
     LOG_DEBUG("InitDroneSettings: CDO found at %p", static_cast<void*>(cdo));
     return true;
@@ -69,7 +156,9 @@ void UpdateActiveDrones()
         return;
     }
 
+    int32_t found = 0;
     int32_t updated = 0;
+    int32_t sharedCdo = 0;
     const int32_t count = objects->Num();
     for (int32_t i = 0; i < count; ++i)
     {
@@ -85,6 +174,16 @@ void UpdateActiveDrones()
             continue;
         }
 
+        ++found;
+
+        // This instance points straight at the CDO -- the write already
+        // landed in InitDroneSettings/OnDroneTick, nothing more to do.
+        if (&settings->BuildingDroneSpeedPerSec == g_drone.speedPerSec)
+        {
+            ++sharedCdo;
+            continue;
+        }
+
         settings->BuildingDroneSpeedPerSec      = *g_drone.speedPerSec;
         settings->BuildingDroneMaxRadius        = *g_drone.maxRadius;
         settings->BuildingDroneWarningRadius    = *g_drone.warningRadius;
@@ -93,5 +192,153 @@ void UpdateActiveDrones()
         ++updated;
     }
 
-    LOG_DEBUG("UpdateActiveDrones: updated %d active drone(s)", updated);
+    LOG_DEBUG("UpdateActiveDrones: updated %d of %d drone instance(s), %d share the CDO settings object",
+        updated, found, sharedCdo);
+
+    if (!g_loggedInstanceReport)
+    {
+        g_loggedInstanceReport = true;
+        LOG_INFO("UpdateActiveDrones: session check -- %d drone instance(s) found, %d use the CDO settings object directly",
+            found, sharedCdo);
+    }
+}
+
+namespace
+{
+    std::atomic<bool>  g_pendingUpdateDrones{ false };
+    std::atomic<bool>  g_pendingRadius{ false };
+    std::atomic<bool>  g_pendingHeight{ false };
+    std::atomic<float> g_pendingRadiusValue{ 0.0f };
+    std::atomic<float> g_pendingHeightValue{ 0.0f };
+}
+
+void RequestUpdateActiveDrones()
+{
+    g_pendingUpdateDrones.store(true, std::memory_order_relaxed);
+}
+
+void RequestMaxRadius(float radiusCm)
+{
+    g_pendingRadiusValue.store(radiusCm, std::memory_order_relaxed);
+    g_pendingRadius.store(true, std::memory_order_relaxed);
+    RequestUpdateActiveDrones();
+}
+
+void RequestMaxHeight(float heightCm)
+{
+    g_pendingHeightValue.store(heightCm, std::memory_order_relaxed);
+    g_pendingHeight.store(true, std::memory_order_relaxed);
+    RequestUpdateActiveDrones();
+}
+
+void SetBoostKeyHeld(bool held)
+{
+    g_boostKeyHeld.store(held, std::memory_order_relaxed);
+}
+
+void OnDroneTick(float deltaSeconds)
+{
+    if (!g_drone.valid || !g_drone.speedPerSec)
+        return;
+
+    bool needsInstanceUpdate = false;
+
+    if (g_pendingUpdateDrones.exchange(false, std::memory_order_relaxed))
+    {
+        if (g_pendingRadius.exchange(false, std::memory_order_relaxed))
+        {
+            const float radius = g_pendingRadiusValue.load(std::memory_order_relaxed);
+            *g_drone.maxRadius     = radius;
+            *g_drone.warningRadius = radius * 0.95f;
+        }
+        if (g_pendingHeight.exchange(false, std::memory_order_relaxed))
+        {
+            const float height = g_pendingHeightValue.load(std::memory_order_relaxed);
+            *g_drone.maxHeight     = height;
+            *g_drone.warningHeight = height * 0.95f;
+        }
+        needsInstanceUpdate = true;
+    }
+
+    // IsLocalPlayerInDrone() wraps its own UWorld::GetWorld() call in try/catch.
+    const bool inDrone = IsLocalPlayerInDrone();
+    g_lastKnownInDrone.store(inDrone, std::memory_order_relaxed);
+
+    if (inDrone && !g_wasInDrone)
+        needsInstanceUpdate = true;
+    g_wasInDrone = inDrone;
+
+    const bool boostActive = g_boostKeyHeld.load(std::memory_order_relaxed) && inDrone;
+
+    const float baseSpeed = DroneConfig::Config::ReadSpeedPerSec();
+    float targetSpeed = boostActive ? baseSpeed * DroneConfig::Config::ReadBoostMultiplier() : baseSpeed;
+    if (targetSpeed > DroneConfig::Config::MaxSpeedPerSec())
+        targetSpeed = DroneConfig::Config::MaxSpeedPerSec();
+
+    if (boostActive != g_boostWasActive)
+    {
+        g_boostWasActive = boostActive;
+        LOG_INFO("OnDroneTick: boost %s, target=%.0f cm/s",
+            boostActive ? "engaged" : "disengaged", targetSpeed);
+    }
+
+    // Acceleration/Deceleration are clamped to a floor above 0 (DroneConfig,
+    // kMinAccelDecel), so there is no longer a snap path here to fall back
+    // to -- every speed change, boost or otherwise, ramps.
+    const float accel = DroneConfig::Config::ReadAcceleration();
+    const float decel = DroneConfig::Config::ReadDeceleration();
+
+    if (g_currentEffectiveSpeed <= 0.0f)
+        g_currentEffectiveSpeed = baseSpeed;
+
+    const bool wasAtTarget = std::fabs(g_currentEffectiveSpeed - targetSpeed) <= 0.01f;
+
+    if (g_currentEffectiveSpeed < targetSpeed)
+    {
+        g_currentEffectiveSpeed += accel * deltaSeconds;
+        if (g_currentEffectiveSpeed > targetSpeed)
+            g_currentEffectiveSpeed = targetSpeed;
+    }
+    else if (g_currentEffectiveSpeed > targetSpeed)
+    {
+        g_currentEffectiveSpeed -= decel * deltaSeconds;
+        if (g_currentEffectiveSpeed < targetSpeed)
+            g_currentEffectiveSpeed = targetSpeed;
+    }
+
+    if (std::fabs(*g_drone.speedPerSec - g_currentEffectiveSpeed) > 0.01f)
+        *g_drone.speedPerSec = g_currentEffectiveSpeed;
+
+    // Push the interpolated value to every drone instance once the ramp (or
+    // an instant, 0-accel snap) lands on target, not on every ramp step.
+    if (!wasAtTarget && std::fabs(g_currentEffectiveSpeed - targetSpeed) <= 0.01f)
+        needsInstanceUpdate = true;
+
+    if (needsInstanceUpdate)
+        UpdateActiveDrones();
+}
+
+void RegisterBoostKey(IPluginSelf* self)
+{
+    if (!self || !self->hooks->Input)
+        return;
+
+    char keyName[64] = {};
+    DroneConfig::Config::ReadBoostKey(keyName, sizeof(keyName));
+    if (keyName[0] == '\0')
+        return;
+
+    self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Pressed, OnBoostKeyPressed);
+    self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Released, OnBoostKeyPressed);
+    snprintf(g_registeredBoostKey, sizeof(g_registeredBoostKey), "%s", keyName);
+}
+
+void UnregisterBoostKey(IPluginSelf* self)
+{
+    if (!self || !self->hooks->Input || g_registeredBoostKey[0] == '\0')
+        return;
+
+    self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKey, EModKeyEvent::Pressed, OnBoostKeyPressed);
+    self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKey, EModKeyEvent::Released, OnBoostKeyPressed);
+    g_registeredBoostKey[0] = '\0';
 }
