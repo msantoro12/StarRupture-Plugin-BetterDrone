@@ -96,13 +96,32 @@ namespace
 
     constexpr FieldUnitScale kBoostScale = { "%.1fx", 1.0f, 0.5f, 1.0f, 1.0f, 10.0f };
 
+    // Volume is already a plain 0..1 fraction, so RenderScaledRow's engine
+    // unit and slider range are used as-is (factor 1.0, no conversion).
+    constexpr FieldUnitScale kMasterVolumeScale = { "%.2f", 1.0f, 0.05f, 0.25f, 0.0f, 1.0f };
+
     constexpr const char* kVolKeys[4] = { "IdleVolume", "MovementVolume", "RotationVolume", "StationVolume" };
+
+    // Sliders stop growing past this width instead of filling the whole
+    // column -- 240px at the default font size, same idea as the loader's
+    // own sliderMaxW (modloader_window.cpp). A plugin has no access to
+    // ImGuiStyle::FontScaleMain, so the scale is derived from the ratio
+    // between the live font size and the loader's base font pixel size
+    // (imgui_backend.cpp's kBasePx) instead.
+    constexpr float kBaseFontPx        = 15.0f;
+    constexpr float kDefaultSliderMaxW = 240.0f;
+
+    float DefaultSliderMaxWidth(IModLoaderImGui* imgui)
+    {
+        return kDefaultSliderMaxW * (imgui->GetFontSize() / kBaseFontPx);
+    }
 
     // Renders one label | slider+box (joined, zero spacing) | reset row for a
     // value tracked in engine units (cm or cm/s). `scale` converts to the
     // unit currently on display; the slider's own range is chosen to feel
     // right in that unit and is independent of the hard clamp the typed
-    // Write* layer applies to whatever engine value is committed.
+    // Write* layer applies to whatever engine value is committed. `maxWidth`
+    // caps the slider's pixel width; 0 (the default) uses DefaultSliderMaxWidth.
     //
     // Returns true and fills *outEngineValue when the row changes the value
     // this frame (drag step, typed edit, or reset) -- the caller should
@@ -112,7 +131,8 @@ namespace
     // should persist to disk only then, not on every drag step.
     bool RenderScaledRow(IModLoaderImGui* imgui, const char* rowId, const char* label,
                           const char* tooltip, float engineValue, float engineDefault,
-                          const FieldUnitScale& scale, float* outEngineValue, bool* outCommit)
+                          const FieldUnitScale& scale, float* outEngineValue, bool* outCommit,
+                          float maxWidth = 0.0f)
     {
         const bool active = std::fabs(engineValue - engineDefault) > kActiveEpsilon;
 
@@ -137,7 +157,11 @@ namespace
 
         const float frameH  = imgui->GetFrameHeight();
         const float numBoxW = textW + (frameH * 2.0f) + (frameH * 0.9f);
-        const float sliderW = (availX > numBoxW + frameH * 2.0f) ? (availX - numBoxW) : (availX * 0.55f);
+        float sliderW = (availX > numBoxW + frameH * 2.0f) ? (availX - numBoxW) : (availX * 0.55f);
+
+        const float cap = (maxWidth > 0.0f) ? maxWidth : DefaultSliderMaxWidth(imgui);
+        if (sliderW > cap)
+            sliderW = cap;
 
         float value = engineValue * scale.factor;
         bool  changed = false;
@@ -176,7 +200,7 @@ namespace
         return changed;
     }
 
-    float DeriveMasterVolume(bool* outActive)
+    float DeriveMasterVolume()
     {
         float vols[4];
         for (int i = 0; i < 4; ++i)
@@ -184,15 +208,12 @@ namespace
 
         float maxV = vols[0];
         bool allEqual = true;
-        bool anyNonDefault = false;
         for (int i = 0; i < 4; ++i)
         {
             if (std::fabs(vols[i] - vols[0]) > kActiveEpsilon) allEqual = false;
             if (vols[i] > maxV) maxV = vols[i];
-            if (std::fabs(vols[i] - 1.0f) > kActiveEpsilon) anyNonDefault = true;
         }
 
-        if (outActive) *outActive = anyNonDefault;
         return allEqual ? vols[0] : maxV;
     }
 
@@ -229,65 +250,17 @@ namespace
         ui->TableSetupColumn("", 0, 0.54f);
         ui->TableSetupColumn("", 0, 0.10f);
 
-        bool active = false;
-        const float current = DeriveMasterVolume(&active);
-
-        ui->PushIDStr("##master_vol");
-        ui->TableNextRow(0, 0.0f);
-
-        ui->TableSetColumnIndex(0);
-        if (active) ui->Text("Master Volume");
-        else        ui->TextDisabled("Master Volume");
-        if (ui->IsItemHovered())
-            ui->SetTooltip("Sets all four drone audio volumes together. Individual volumes are on the ModLoader settings page.");
-
-        ui->TableSetColumnIndex(1);
-
-        float availX = 0.0f, availY = 0.0f;
-        ui->GetContentRegionAvail(&availX, &availY);
-
-        float textW = 0.0f, textH = 0.0f;
-        ui->CalcTextSize("1.00", &textW, &textH, false, -1.0f);
-        const float frameH  = ui->GetFrameHeight();
-        const float numBoxW = textW + (frameH * 2.0f) + (frameH * 0.9f);
-        const float sliderW = (availX > numBoxW + frameH * 2.0f) ? (availX - numBoxW) : (availX * 0.55f);
-
-        float value = current;
-        bool  changed = false;
-        bool  commit  = false;
-
-        ui->SetNextItemWidth(sliderW);
-        if (ui->SliderFloat("##slider", &value, 0.0f, 1.0f, "%.2f"))
-            changed = true;
-        if (ui->IsItemDeactivatedAfterEdit())
-            commit = true;
-
-        ui->SameLine(0.0f, 0.0f);
-        ui->SetNextItemWidth(-1.0f);
-        if (ui->InputFloat("##num", &value, 0.05f, 0.25f, "%.2f"))
-            changed = true;
-        if (ui->IsItemDeactivatedAfterEdit())
-            commit = true;
-
-        ui->TableSetColumnIndex(2);
-        if (BetterDrone::UI::ResetButton(ui, "##reset"))
+        float newValue = 0.0f;
+        bool  commit   = false;
+        if (RenderScaledRow(ui, "##master_vol", "Master Volume",
+                             "Sets all four drone audio volumes together. Individual volumes are on the ModLoader settings page.",
+                             DeriveMasterVolume(), 1.0f, kMasterVolumeScale, &newValue, &commit))
         {
-            value = 1.0f;
-            changed = true;
-            commit  = true;
-        }
-        if (ui->IsItemHovered())
-            ui->SetTooltip("Reset all four volumes to 1.0.");
-
-        ui->PopID();
-
-        if (changed)
-        {
-            if (value < 0.0f) value = 0.0f;
-            if (value > 1.0f) value = 1.0f;
-            ApplyMasterVolumeLive(value);
+            if (newValue < 0.0f) newValue = 0.0f;
+            if (newValue > 1.0f) newValue = 1.0f;
+            ApplyMasterVolumeLive(newValue);
             if (commit)
-                PersistMasterVolume(value);
+                PersistMasterVolume(newValue);
         }
 
         ui->EndTable();

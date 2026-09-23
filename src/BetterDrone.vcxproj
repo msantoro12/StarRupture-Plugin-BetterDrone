@@ -100,6 +100,7 @@
     <ClCompile Include="drone_audio.cpp" />
     <ClCompile Include="drone_config.cpp" />
     <ClCompile Include="drone_interact.cpp" />
+    <ClCompile Include="drone_key_vk.cpp" />
     <ClCompile Include="drone_settings.cpp" />
     <ClCompile Include="drone_sprint_key.cpp" />
     <ClCompile Include="drone_ui.cpp" />
@@ -115,6 +116,7 @@
     <ClInclude Include="drone_audio.h" />
     <ClInclude Include="drone_config.h" />
     <ClInclude Include="drone_interact.h" />
+    <ClInclude Include="drone_key_vk.h" />
     <ClInclude Include="drone_settings.h" />
     <ClInclude Include="drone_sprint_key.h" />
     <ClInclude Include="drone_ui.h" />
