@@ -39,8 +39,5 @@ bool InitDroneInteract();
 
 void ShutdownDroneInteract();
 
-// True if the local player's character is currently flying the building
-// drone. Game-thread only -- touches UWorld/UObject state. Shared with
-// drone_settings.cpp so boost gating and the interact hooks agree on what
-// "in the drone" means.
+// Game thread only.
 bool IsLocalPlayerInDrone();
