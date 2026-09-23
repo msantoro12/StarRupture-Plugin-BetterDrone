@@ -274,14 +274,14 @@ namespace DroneConfig
         g_speedUnit.store(SpeedUnitIndex(unit));
 
         static const ConfigEntry entries[] = {
-            { "Drone",       "Always Allow Drone",     ConfigValueType::Boolean, "false",     "Allow the building drone to be out in places it should not be, including during environmental wave events.", 0.0f, 1.0f },
-            { "Interaction", "Interact In Drone Mode", ConfigValueType::Boolean, "true",      "Let the drone open building UIs, the same as walking up to them on foot.", 0.0f, 1.0f },
-            { "Interaction", "Interact Key",           ConfigValueType::Keybind, "E",         "Key that interacts while the drone is out. Set this to match the game's own interact key.", 0.0f, 0.0f },
+            { "Drone",       "Always Allow Drone",     ConfigValueType::Boolean, "false",     "Allow the building drone in places it's normally blocked, including wave events.", 0.0f, 1.0f },
+            { "Interaction", "Interact In Drone Mode", ConfigValueType::Boolean, "true",      "Opens nearby containers and doors from the drone without dismounting. The camera does not recenter when the prompt appears.", 0.0f, 1.0f },
+            { "Interaction", "Interact Key",           ConfigValueType::Keybind, "E",         "Key that triggers interaction while the drone is out, matching the game's own interact key.", 0.0f, 0.0f },
             // Matches BetterCheats' own ToggleKey default on purpose, so one
             // F10 press opens both panels. The loader dispatches a keypress
             // to every plugin registered on it, not just one, so this is safe.
             { "Controls",    "ToggleKey",              ConfigValueType::Keybind, "F10",        "Key to toggle the BetterDrone menu window", 0.0f, 0.0f },
-            { "Controls",    "BoostKey",               ConfigValueType::Keybind, kBoostKeyFollowsSprint, "Key held to boost drone speed. Defaults to following your Sprint key; rebind to use a dedicated key instead, or Reset to go back to Sprint.", 0.0f, 0.0f },
+            { "Controls",    "BoostKey",               ConfigValueType::Keybind, kBoostKeyFollowsSprint, "Key held to boost drone speed, following your Sprint key unless you set one here.", 0.0f, 0.0f },
             { "Audio",       "IdleVolume",             ConfigValueType::Float,   "1.0",       "Drone constant idle hum volume (0.0 to 1.0)", 0.0f, 1.0f },
             { "Audio",       "MovementVolume",         ConfigValueType::Float,   "1.0",       "Drone movement sound volume (0.0 to 1.0)",     0.0f, 1.0f },
             { "Audio",       "RotationVolume",         ConfigValueType::Float,   "1.0",       "Drone rotation sound volume (0.0 to 1.0)",     0.0f, 1.0f },
