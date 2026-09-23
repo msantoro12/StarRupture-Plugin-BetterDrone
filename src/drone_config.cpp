@@ -154,6 +154,22 @@ namespace DroneConfig
             MigrateString(self, "UI", "SpeedUnit", "km/h");
         }
 
+        // Two stale spellings of "no custom key chosen" predate the current
+        // kBoostKeyFollowsSprint sentinel: the literal "LeftShift" (the
+        // original shipped default, which the loader's rebind picker rejects
+        // outright and so could never have been a deliberate choice) and an
+        // empty value (what briefly wrote it before the sentinel existed).
+        // Both are safe to rewrite unconditionally, every load, with no
+        // one-time flag needed -- a real custom combo is never either of
+        // these.
+        void MigrateBoostKeyIfNeeded(IPluginSelf* self)
+        {
+            char current[64] = {};
+            self->config->ReadString(self, "Controls", "BoostKey", current, sizeof(current), kBoostKeyFollowsSprint);
+            if (current[0] == '\0' || strcmp(current, "LeftShift") == 0)
+                self->config->WriteString(self, "Controls", "BoostKey", kBoostKeyFollowsSprint);
+        }
+
         // In-memory mirror of one panel-file float. Loaded once in
         // Config::Initialize; every Read after that is a plain atomic load
         // -- OnDroneTick calls several of these every tick, and the file
@@ -233,6 +249,7 @@ namespace DroneConfig
             return;
 
         MigratePanelSettingsIfNeeded(s_self);
+        MigrateBoostKeyIfNeeded(s_self);
 
         g_speedPerSec.Init("Drone", "SpeedPerSec", kMinSpeedPerSec, kMaxSpeedPerSec,
             PanelReadFloat("Drone", "SpeedPerSec", 1000.0f));
@@ -264,7 +281,7 @@ namespace DroneConfig
             // F10 press opens both panels. The loader dispatches a keypress
             // to every plugin registered on it, not just one, so this is safe.
             { "Controls",    "ToggleKey",              ConfigValueType::Keybind, "F10",        "Key to toggle the BetterDrone menu window", 0.0f, 0.0f },
-            { "Controls",    "BoostKey",               ConfigValueType::Keybind, "LeftShift", "Key held to boost drone speed", 0.0f, 0.0f },
+            { "Controls",    "BoostKey",               ConfigValueType::Keybind, kBoostKeyFollowsSprint, "Key held to boost drone speed. Defaults to following your Sprint key; rebind to use a dedicated key instead, or Reset to go back to Sprint.", 0.0f, 0.0f },
             { "Audio",       "IdleVolume",             ConfigValueType::Float,   "1.0",       "Drone constant idle hum volume (0.0 to 1.0)", 0.0f, 1.0f },
             { "Audio",       "MovementVolume",         ConfigValueType::Float,   "1.0",       "Drone movement sound volume (0.0 to 1.0)",     0.0f, 1.0f },
             { "Audio",       "RotationVolume",         ConfigValueType::Float,   "1.0",       "Drone rotation sound volume (0.0 to 1.0)",     0.0f, 1.0f },
@@ -314,10 +331,10 @@ namespace DroneConfig
         if (!outBuffer || bufferSize <= 0) return;
         outBuffer[0] = '\0';
         if (!s_self ||
-            !s_self->config->ReadString(s_self, "Controls", "BoostKey", outBuffer, bufferSize, "LeftShift") ||
+            !s_self->config->ReadString(s_self, "Controls", "BoostKey", outBuffer, bufferSize, kBoostKeyFollowsSprint) ||
             outBuffer[0] == '\0')
         {
-            snprintf(outBuffer, static_cast<size_t>(bufferSize), "LeftShift");
+            snprintf(outBuffer, static_cast<size_t>(bufferSize), "%s", kBoostKeyFollowsSprint);
         }
     }
 
