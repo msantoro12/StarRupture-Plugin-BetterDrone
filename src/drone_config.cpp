@@ -20,6 +20,23 @@ namespace DroneConfig
         constexpr float kMaxHeightBound      = 500000.0f;
         constexpr float kMinBoostMultiplier  = 1.0f;
         constexpr float kMaxBoostMultiplier  = 10.0f;
+
+        // The drone has no movement component (no UFloatingPawnMovement or
+        // similar on ACrCharacterDroneBase/ABP_FloatingDrone_C -- checked the
+        // SDK dump), and UAuActorPlacementDeveloperSettings exposes only a
+        // flat BuildingDroneSpeedPerSec target, no acceleration/deceleration
+        // of its own to inherit. There is nothing native to read here.
+        //
+        // So this floor is a deliberate choice, not a game value: fast enough
+        // to feel responsive, slow enough to never read as a snap. It covers
+        // the default 2x boost jump (1000 -> 2000 cm/s) in a quarter second.
+        // It doubles as the reset-to-default value (DefaultAcceleration/
+        // DefaultDeceleration in drone_config.h -- keep both in sync with
+        // this), and as the Init clamp floor, so any saved 0 from before this
+        // change (including a fresh migration with nothing to migrate) gets
+        // clamped up to it on every load, not just once.
+        constexpr float kMinAccelDecel       = 4000.0f;
+        constexpr float kDefaultAccelDecel   = kMinAccelDecel;
         constexpr float kMaxAccelDecel       = 50000.0f;
 
         float Clamp(float value, float lo, float hi)
@@ -131,8 +148,8 @@ namespace DroneConfig
             MigrateFloat(self, "Drone", "MaxHeight",   2000.0f);
 
             MigrateFloat(self, "Controls", "BoostMultiplier", 2.0f);
-            MigrateFloat(self, "Controls", "Acceleration",    0.0f);
-            MigrateFloat(self, "Controls", "Deceleration",    0.0f);
+            MigrateFloat(self, "Controls", "Acceleration",    kDefaultAccelDecel);
+            MigrateFloat(self, "Controls", "Deceleration",    kDefaultAccelDecel);
 
             MigrateString(self, "UI", "SpeedUnit", "km/h");
         }
@@ -242,10 +259,15 @@ namespace DroneConfig
             PanelReadFloat("Drone", "MaxHeight", 2000.0f));
         g_boostMultiplier.Init("Controls", "BoostMultiplier", kMinBoostMultiplier, kMaxBoostMultiplier,
             PanelReadFloat("Controls", "BoostMultiplier", 2.0f));
-        g_acceleration.Init("Controls", "Acceleration", 0.0f, kMaxAccelDecel,
-            PanelReadFloat("Controls", "Acceleration", 0.0f));
-        g_deceleration.Init("Controls", "Deceleration", 0.0f, kMaxAccelDecel,
-            PanelReadFloat("Controls", "Deceleration", 0.0f));
+        // kMinAccelDecel is the floor, not just a fallback: Init clamps
+        // whatever loads (see CachedFloat::Init below), so a value saved as
+        // 0 by a build predating this change comes back up to the floor on
+        // this and every later load, the same way any other stored value
+        // outside its bounds already gets clamped back in range.
+        g_acceleration.Init("Controls", "Acceleration", kMinAccelDecel, kMaxAccelDecel,
+            PanelReadFloat("Controls", "Acceleration", kDefaultAccelDecel));
+        g_deceleration.Init("Controls", "Deceleration", kMinAccelDecel, kMaxAccelDecel,
+            PanelReadFloat("Controls", "Deceleration", kDefaultAccelDecel));
 
         char unit[16] = {};
         PanelReadString("UI", "SpeedUnit", kSpeedUnits[0], unit, sizeof(unit));
@@ -342,6 +364,9 @@ namespace DroneConfig
     float Config::SetDecelerationLive(float value)  { return g_deceleration.SetLive(value); }
     void  Config::PersistDeceleration()             { g_deceleration.Persist(); }
     float Config::WriteDeceleration(float value)    { return g_deceleration.Write(value); }
+
+    float Config::DefaultAcceleration() { return kDefaultAccelDecel; }
+    float Config::DefaultDeceleration() { return kDefaultAccelDecel; }
 
     void Config::ReadSpeedUnit(char* outBuffer, int bufferSize)
     {

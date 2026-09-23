@@ -80,8 +80,12 @@ namespace DroneConfig
         // MaxRadius and MaxHeight instead reset to DroneSettings::orig*, the
         // stock CDO values captured in InitDroneSettings).
         static float DefaultBoostMultiplier() { return 2.0f; }
-        static float DefaultAcceleration()    { return 0.0f; }
-        static float DefaultDeceleration()    { return 0.0f; }
+
+        // Backed by kDefaultAccelDecel in drone_config.cpp, the one place
+        // that value is chosen -- see the comment there for why. Also the
+        // Init clamp floor, so this is never reachable as "instant" again.
+        static float DefaultAcceleration();
+        static float DefaultDeceleration();
 
     private:
         static IPluginSelf* s_self;
