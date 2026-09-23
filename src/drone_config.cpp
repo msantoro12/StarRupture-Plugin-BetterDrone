@@ -277,7 +277,10 @@ namespace DroneConfig
             { "Drone",       "Always Allow Drone",     ConfigValueType::Boolean, "false",     "Allow the building drone in places it's normally blocked, including wave events.", 0.0f, 1.0f },
             { "Interaction", "Interact In Drone Mode", ConfigValueType::Boolean, "true",      "Opens nearby containers and doors from the drone without dismounting. The camera does not recenter when the prompt appears.", 0.0f, 1.0f },
             { "Interaction", "Interact Key",           ConfigValueType::Keybind, "E",         "Key that triggers interaction while the drone is out, matching the game's own interact key.", 0.0f, 0.0f },
-            { "Controls",    "ToggleKey",              ConfigValueType::Keybind, "F8",        "Key to toggle the BetterDrone menu window", 0.0f, 0.0f },
+            // Matches BetterCheats' own ToggleKey default on purpose, so one
+            // F10 press opens both panels. The loader dispatches a keypress
+            // to every plugin registered on it, not just one, so this is safe.
+            { "Controls",    "ToggleKey",              ConfigValueType::Keybind, "F10",        "Key to toggle the BetterDrone menu window", 0.0f, 0.0f },
             { "Controls",    "BoostKey",               ConfigValueType::Keybind, kBoostKeyFollowsSprint, "Key held to boost drone speed, following your Sprint key unless you set one here.", 0.0f, 0.0f },
             { "Audio",       "IdleVolume",             ConfigValueType::Float,   "1.0",       "Drone constant idle hum volume (0.0 to 1.0)", 0.0f, 1.0f },
             { "Audio",       "MovementVolume",         ConfigValueType::Float,   "1.0",       "Drone movement sound volume (0.0 to 1.0)",     0.0f, 1.0f },
@@ -316,10 +319,10 @@ namespace DroneConfig
         if (!outBuffer || bufferSize <= 0) return;
         outBuffer[0] = '\0';
         if (!s_self ||
-            !s_self->config->ReadString(s_self, "Controls", "ToggleKey", outBuffer, bufferSize, "F8") ||
+            !s_self->config->ReadString(s_self, "Controls", "ToggleKey", outBuffer, bufferSize, "F10") ||
             outBuffer[0] == '\0')
         {
-            snprintf(outBuffer, static_cast<size_t>(bufferSize), "F8");
+            snprintf(outBuffer, static_cast<size_t>(bufferSize), "F10");
         }
     }
 
