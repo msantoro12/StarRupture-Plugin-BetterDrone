@@ -1,67 +1,86 @@
 #pragma once
 #include <plugin_interface.h>
-#include <cstdio>
 
 namespace DroneConfig
 {
     class Config
     {
     public:
-        static void SetSelf(IPluginSelf* self) { s_self = self; }
+        // Migrates any panel-only settings out of the loader's BetterDrone.ini
+        // (first run only) and registers the slim loader-page schema. Must run
+        // once, from PluginInit.
+        static void Initialize(IPluginSelf* self);
 
-        // Called once the CDO is available so defaultValue strings reflect real game values.
-        static void InitializeWithCDODefaults(float speedPerSec, float maxRadius, float maxHeight)
-        {
-            snprintf(s_defSpeed,      sizeof(s_defSpeed),      "%.2f", speedPerSec);
-            snprintf(s_defRadius,     sizeof(s_defRadius),     "%.2f", maxRadius);
-            snprintf(s_defHeight,     sizeof(s_defHeight),     "%.2f", maxHeight);
+        // Loader-page settings: stored in BetterDrone.ini via IPluginConfig,
+        // editable from the ModLoader settings window.
+        static bool ReadAlwaysAllowDrone();
+        static bool ReadInteractInDroneMode();
+        static void ReadInteractKey(char* outBuffer, int bufferSize);
+        static void ReadToggleKey(char* outBuffer, int bufferSize);
+        static void ReadBoostKey(char* outBuffer, int bufferSize);
 
-            s_entries[0] = { "Drone", "SpeedPerSec",      ConfigValueType::Float, s_defSpeed,      "Movement speed (cm/s)",                         0.0f, 4000.0f    };
-            s_entries[1] = { "Drone", "MaxRadius",        ConfigValueType::Float, s_defRadius,     "Maximum horizontal range (cm)",                 0.0f, 1000000.0f };
-            s_entries[2] = { "Drone", "MaxHeight",        ConfigValueType::Float, s_defHeight,     "Maximum vertical range (cm)",                   0.0f, 100000.0f  };
-            s_entries[3] = { "Drone", "Always Allow Drone", ConfigValueType::Boolean,  "false",         "Allow the building drone to be out in places it should not be, including during environmental wave events.",  0.0f, 1.0f       };
+        // Panel-only settings: stored in BetterDrone-Panel.ini, which the
+        // loader never rewrites, and cached in memory (loaded once in
+        // Initialize) so the tick path never touches the file. Read* returns
+        // the cache. SetXxxLive clamps and updates the cache only -- for a
+        // slider mid-drag, where the drone should react but a disk write
+        // every frame would not. PersistXxx writes the current cached value
+        // to disk once the edit is done. WriteXxx does both, for a single
+        // action (reset button, preset).
+        static float ReadSpeedPerSec();
+        static float SetSpeedPerSecLive(float value);
+        static void  PersistSpeedPerSec();
+        static float WriteSpeedPerSec(float value);
 
-            s_entries[4] = { "Interaction", "Interact In Drone Mode", ConfigValueType::Boolean, "true", "Let the drone open building UIs, the same as walking up to them on foot.", 0.0f, 1.0f };
-            s_entries[5] = { "Interaction", "Interact Key",           ConfigValueType::Keybind, "E",    "Key that interacts while the drone is out. Set this to match the game's own interact key.", 0.0f, 0.0f };
+        static float ReadMaxRadius();
+        static float SetMaxRadiusLive(float value);
+        static void  PersistMaxRadius();
+        static float WriteMaxRadius(float value);
 
-            s_schema = { s_entries, 6 };
+        static float ReadMaxHeight();
+        static float SetMaxHeightLive(float value);
+        static void  PersistMaxHeight();
+        static float WriteMaxHeight(float value);
 
-            if (s_self)
-                s_self->config->InitializeFromSchema(s_self, &s_schema);
-        }
+        static float ReadBoostMultiplier();
+        static float SetBoostMultiplierLive(float value);
+        static void  PersistBoostMultiplier();
+        static float WriteBoostMultiplier(float value);
 
-        static float ReadSpeedPerSec()     { return s_self ? s_self->config->ReadFloat(s_self, "Drone", "SpeedPerSec",      0.0f)  : 0.0f;  }
-        static float ReadMaxRadius()       { return s_self ? s_self->config->ReadFloat(s_self, "Drone", "MaxRadius",        0.0f)  : 0.0f;  }
-        static float ReadMaxHeight()       { return s_self ? s_self->config->ReadFloat(s_self, "Drone", "MaxHeight",        0.0f)  : 0.0f;  }
-        static bool  ReadAlwaysAllowDrone(){ return s_self ? s_self->config->ReadBool (s_self, "Drone", "Always Allow Drone", false) : false; }
+        static float ReadAcceleration();
+        static float SetAccelerationLive(float value);
+        static void  PersistAcceleration();
+        static float WriteAcceleration(float value);
 
-        static bool ReadInteractInDroneMode()
-        {
-            return s_self ? s_self->config->ReadBool(s_self, "Interaction", "Interact In Drone Mode", true) : false;
-        }
+        static float ReadDeceleration();
+        static float SetDecelerationLive(float value);
+        static void  PersistDeceleration();
+        static float WriteDeceleration(float value);
 
-        // Copies the configured interact key name into outBuffer, falling back to "E".
-        static void ReadInteractKey(char* outBuffer, int bufferSize)
-        {
-            if (!outBuffer || bufferSize <= 0)
-                return;
+        static void  ReadSpeedUnit(char* outBuffer, int bufferSize);
+        static void  WriteSpeedUnit(const char* unit);
 
-            outBuffer[0] = '\0';
+        // Hard ceiling on cm/s reaching the CDO, base speed or boosted. The
+        // same bound Init/Write clamp the base speed to.
+        static float MaxSpeedPerSec();
 
-            if (!s_self ||
-                !s_self->config->ReadString(s_self, "Interaction", "Interact Key", outBuffer, bufferSize, "E") ||
-                outBuffer[0] == '\0')
-            {
-                snprintf(outBuffer, static_cast<size_t>(bufferSize), "E");
-            }
-        }
+        // Audio volumes: loader-page settings (schema-registered, instant via
+        // OnConfigChanged), stored in BetterDrone.ini like the rest of this list.
+        static float ReadAudioVolume(const char* key);
+        static void  WriteAudioVolume(const char* key, float value);
+
+        // The in-panel defaults for fields with no CDO equivalent (Speed,
+        // MaxRadius and MaxHeight instead reset to DroneSettings::orig*, the
+        // stock CDO values captured in InitDroneSettings).
+        static float DefaultBoostMultiplier() { return 2.0f; }
+
+        // Backed by kDefaultAccelDecel in drone_config.cpp, the one place
+        // that value is chosen -- see the comment there for why. Also the
+        // Init clamp floor, so this is never reachable as "instant" again.
+        static float DefaultAcceleration();
+        static float DefaultDeceleration();
 
     private:
         static IPluginSelf* s_self;
-        static char s_defSpeed[32];
-        static char s_defRadius[32];
-        static char s_defHeight[32];
-        static ConfigEntry s_entries[6];
-        static ConfigSchema s_schema;
     };
 }
