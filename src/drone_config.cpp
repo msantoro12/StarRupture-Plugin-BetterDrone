@@ -1,4 +1,5 @@
 #include "drone_config.h"
+#include "drone_audio.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -151,6 +152,9 @@ namespace DroneConfig
             MigrateFloat(self, "Controls", "Acceleration",    kDefaultAccelDecel);
             MigrateFloat(self, "Controls", "Deceleration",    kDefaultAccelDecel);
 
+            for (const char* key : DroneAudio::kVolumeKeys)
+                MigrateFloat(self, "Audio", key, 1.0f);
+
             MigrateString(self, "UI", "SpeedUnit", "km/h");
         }
 
@@ -225,6 +229,21 @@ namespace DroneConfig
         CachedFloat g_acceleration;
         CachedFloat g_deceleration;
 
+        constexpr float kMinVolume = 0.0f;
+        constexpr float kMaxVolume = 1.0f;
+
+        // One CachedFloat per DroneAudio::kVolumeKeys entry, same order.
+        CachedFloat g_audioVol[DroneAudio::kVolCount];
+
+        CachedFloat* FindAudioVol(const char* key)
+        {
+            if (!key) return nullptr;
+            for (int v = 0; v < DroneAudio::kVolCount; ++v)
+                if (strcmp(DroneAudio::kVolumeKeys[v], key) == 0)
+                    return &g_audioVol[v];
+            return nullptr;
+        }
+
         // The panel needs the unit every frame it draws, so it is cached like the
         // floats rather than read from the file on each call.
         const char* const kSpeedUnits[] = { "km/h", "mph", "cm/s" };
@@ -269,6 +288,12 @@ namespace DroneConfig
         g_deceleration.Init("Controls", "Deceleration", kMinAccelDecel, kMaxAccelDecel,
             PanelReadFloat("Controls", "Deceleration", kDefaultAccelDecel));
 
+        for (int v = 0; v < DroneAudio::kVolCount; ++v)
+        {
+            const char* key = DroneAudio::kVolumeKeys[v];
+            g_audioVol[v].Init("Audio", key, kMinVolume, kMaxVolume, PanelReadFloat("Audio", key, 1.0f));
+        }
+
         char unit[16] = {};
         PanelReadString("UI", "SpeedUnit", kSpeedUnits[0], unit, sizeof(unit));
         g_speedUnit.store(SpeedUnitIndex(unit));
@@ -282,10 +307,6 @@ namespace DroneConfig
             // to every plugin registered on it, not just one, so this is safe.
             { "Controls",    "ToggleKey",              ConfigValueType::Keybind, "F10",        "Key to toggle the BetterDrone menu window", 0.0f, 0.0f },
             { "Controls",    "BoostKey",               ConfigValueType::Keybind, kBoostKeyFollowsSprint, "Key held to boost drone speed, following your Sprint key unless you set one here.", 0.0f, 0.0f },
-            { "Audio",       "IdleVolume",             ConfigValueType::Float,   "1.0",       "Drone constant idle hum volume (0.0 to 1.0)", 0.0f, 1.0f },
-            { "Audio",       "MovementVolume",         ConfigValueType::Float,   "1.0",       "Drone movement sound volume (0.0 to 1.0)",     0.0f, 1.0f },
-            { "Audio",       "RotationVolume",         ConfigValueType::Float,   "1.0",       "Drone rotation sound volume (0.0 to 1.0)",     0.0f, 1.0f },
-            { "Audio",       "StationVolume",          ConfigValueType::Float,   "1.0",       "Drone station sound volume (0.0 to 1.0)",      0.0f, 1.0f },
         };
         static const ConfigSchema schema{ entries, static_cast<int>(sizeof(entries) / sizeof(entries[0])) };
 
@@ -389,13 +410,25 @@ namespace DroneConfig
 
     float Config::ReadAudioVolume(const char* key)
     {
-        if (!s_self || !key) return 1.0f;
-        return Clamp(s_self->config->ReadFloat(s_self, "Audio", key, 1.0f), 0.0f, 1.0f);
+        CachedFloat* cf = FindAudioVol(key);
+        return cf ? cf->Read() : 1.0f;
+    }
+
+    float Config::SetAudioVolumeLive(const char* key, float value)
+    {
+        CachedFloat* cf = FindAudioVol(key);
+        return cf ? cf->SetLive(value) : Clamp(value, kMinVolume, kMaxVolume);
+    }
+
+    void Config::PersistAudioVolume(const char* key)
+    {
+        if (CachedFloat* cf = FindAudioVol(key))
+            cf->Persist();
     }
 
     void Config::WriteAudioVolume(const char* key, float value)
     {
-        if (!s_self || !key) return;
-        s_self->config->WriteFloat(s_self, "Audio", key, Clamp(value, 0.0f, 1.0f));
+        if (CachedFloat* cf = FindAudioVol(key))
+            cf->Write(value);
     }
 }

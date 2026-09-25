@@ -13,17 +13,6 @@ namespace DroneAudio
         constexpr float kActiveEpsilon = 0.0001f;
         constexpr float kReapplySeconds = 0.5f;
 
-        enum VolIndex : int { kVolIdle = 0, kVolMovement, kVolRotation, kVolStation, kVolCount };
-
-        struct VolDef { const char* key; };
-
-        const VolDef kVols[kVolCount] = {
-            { "IdleVolume" },
-            { "MovementVolume" },
-            { "RotationVolume" },
-            { "StationVolume" },
-        };
-
         std::atomic<float> g_vol[kVolCount] = { 1.0f, 1.0f, 1.0f, 1.0f };
         float g_timer = 0.0f;
         std::atomic<bool> g_pendingApply{ false };
@@ -109,7 +98,7 @@ namespace DroneAudio
         void ReadAudioConfig()
         {
             for (int v = 0; v < kVolCount; ++v)
-                g_vol[v].store(DroneConfig::Config::ReadAudioVolume(kVols[v].key), std::memory_order_relaxed);
+                g_vol[v].store(DroneConfig::Config::ReadAudioVolume(kVolumeKeys[v]), std::memory_order_relaxed);
         }
     }
 
@@ -137,7 +126,7 @@ namespace DroneAudio
 
         for (int v = 0; v < kVolCount; ++v)
         {
-            if (strcmp(kVols[v].key, key) != 0)
+            if (strcmp(kVolumeKeys[v], key) != 0)
                 continue;
 
             const float clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
