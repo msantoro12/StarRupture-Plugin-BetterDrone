@@ -7,7 +7,6 @@
 #include <plugin_interface.h>
 #include <windows.h>
 #include <cstring>
-#include <cstdlib>
 
 #include "drone_ui.h"
 
@@ -64,20 +63,11 @@ static void OnEngineTick(float deltaSeconds)
 
 // Fires only from the loader's own settings window, for the entries
 // registered in DroneConfig::Config::Initialize. Keybind rebinds and the
-// boolean entries are picked up live wherever they're consulted. The Audio
-// volumes are the one case with real work: the loader's slider fires this on
-// every drag frame, before the value is committed to disk, so this has to
-// parse newValue itself rather than re-read the file (GSS-9).
+// boolean entries are picked up live wherever they're consulted.
 static void OnConfigChanged(const char* section, const char* key, const char* newValue)
 {
     if (!section || !key)
         return;
-
-    if (strcmp(section, "Audio") == 0 && newValue)
-    {
-        DroneAudio::SetVolume(key, strtof(newValue, nullptr));
-        return;
-    }
 
     if (strcmp(section, "Controls") == 0 && strcmp(key, "BoostKey") == 0)
     {

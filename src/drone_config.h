@@ -71,9 +71,15 @@ namespace DroneConfig
         // Applies to boosted speed too, not just the base setting.
         static float MaxSpeedPerSec();
 
-        // Audio volumes: loader-page settings (schema-registered, instant via
-        // OnConfigChanged), stored in BetterDrone.ini like the rest of this list.
+        // Audio volumes: panel-only settings, one cached float per sound,
+        // keyed by the same strings DroneAudio::kVolumeKeys uses. SetLive
+        // updates the cache only, for a slider mid-drag or the Master Volume
+        // row's live-drag fan-out; Persist writes the current cached value
+        // to disk once the edit is done; Write does both, for a single
+        // action (reset button, Master Volume commit).
         static float ReadAudioVolume(const char* key);
+        static float SetAudioVolumeLive(const char* key, float value);
+        static void  PersistAudioVolume(const char* key);
         static void  WriteAudioVolume(const char* key, float value);
 
         // The in-panel defaults for fields with no CDO equivalent (Speed,
