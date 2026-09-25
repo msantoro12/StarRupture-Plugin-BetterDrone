@@ -127,7 +127,15 @@ namespace
     // unit and slider range are used as-is (factor 1.0, no conversion).
     constexpr FieldUnitScale kMasterVolumeScale = { "%.2f", 1.0f, 0.05f, 0.25f, 0.0f, 1.0f };
 
-    constexpr const char* kVolKeys[4] = { "IdleVolume", "MovementVolume", "RotationVolume", "StationVolume" };
+    struct VolRowDef { const char* label; const char* tooltip; };
+
+    // Order matches DroneAudio::kVolumeKeys.
+    constexpr VolRowDef kVolRows[DroneAudio::kVolCount] = {
+        { "Idle Volume",     "The constant drone hum that plays whenever the drone is out. Usually the one worth turning down." },
+        { "Movement Volume", "Plays while the drone is travelling." },
+        { "Rotation Volume", "Plays while the drone turns." },
+        { "Station Volume",  "Building-side drone audio -- stations and their kin. Filtered to drone-named actors, so it does not silence the rest of your base." },
+    };
 
     // Sliders stop growing past this width instead of filling the whole
     // column -- 240px at the default font size, same idea as the loader's
@@ -229,13 +237,13 @@ namespace
 
     float DeriveMasterVolume()
     {
-        float vols[4];
-        for (int i = 0; i < 4; ++i)
-            vols[i] = DroneConfig::Config::ReadAudioVolume(kVolKeys[i]);
+        float vols[DroneAudio::kVolCount];
+        for (int i = 0; i < DroneAudio::kVolCount; ++i)
+            vols[i] = DroneConfig::Config::ReadAudioVolume(DroneAudio::kVolumeKeys[i]);
 
         float maxV = vols[0];
         bool allEqual = true;
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < DroneAudio::kVolCount; ++i)
         {
             if (std::fabs(vols[i] - vols[0]) > kActiveEpsilon) allEqual = false;
             if (vols[i] > maxV) maxV = vols[i];
@@ -245,26 +253,52 @@ namespace
     }
 
     // Updates the drone's live audio immediately (an atomic store, same as
-    // the loader page's own drag path); does not touch BetterDrone.ini.
+    // a single row's own drag path) and the cache the rows below read from,
+    // so they visibly track a master drag; does not touch BetterDrone-Panel.ini.
     void ApplyMasterVolumeLive(float value)
     {
-        for (const char* key : kVolKeys)
+        for (const char* key : DroneAudio::kVolumeKeys)
+        {
+            DroneConfig::Config::SetAudioVolumeLive(key, value);
             DroneAudio::SetVolume(key, value);
+        }
     }
 
-    // Writes all four volumes to BetterDrone.ini. Called once the edit is
-    // done, not on every drag step.
-    void PersistMasterVolume(float value)
+    // Persists all four volumes to BetterDrone-Panel.ini. Called once the
+    // edit is done, not on every drag step; ApplyMasterVolumeLive already
+    // updated the cache each of those already wrote to.
+    void PersistMasterVolume()
     {
-        for (const char* key : kVolKeys)
-            DroneConfig::Config::WriteAudioVolume(key, value);
+        for (const char* key : DroneAudio::kVolumeKeys)
+            DroneConfig::Config::PersistAudioVolume(key);
     }
 
-    // The four individual volumes live on the ModLoader settings page (instant
-    // there too, see dllmain.cpp's OnConfigChanged). This is a "set all"
-    // convenience, not a fifth value -- it derives its display from the four
-    // rather than persisting one of its own, so it can never drift out of
-    // sync with the loader page.
+    // One row per DroneAudio::kVolumeKeys entry, live-applied to the drone
+    // and cached the same way the master row above updates them.
+    void RenderVolumeRow(IModLoaderImGui* ui, int index)
+    {
+        const char* key = DroneAudio::kVolumeKeys[index];
+        char rowId[24];
+        snprintf(rowId, sizeof(rowId), "##vol_%d", index);
+
+        float newValue = 0.0f;
+        bool  commit    = false;
+        if (RenderScaledRow(ui, rowId, kVolRows[index].label, kVolRows[index].tooltip,
+                             DroneConfig::Config::ReadAudioVolume(key), 1.0f, kMasterVolumeScale, &newValue, &commit))
+        {
+            DroneConfig::Config::SetAudioVolumeLive(key, newValue);
+            DroneAudio::SetVolume(key, newValue);
+            if (commit)
+                DroneConfig::Config::PersistAudioVolume(key);
+        }
+    }
+
+    // The four individual volumes used to live on the ModLoader settings
+    // page; they are panel-only now (DroneConfig::Config's audio CachedFloats,
+    // migrated out the same way Speed/MaxRadius/MaxHeight were). Master
+    // Volume is a "set all" convenience, not a fifth stored value -- it
+    // derives its display from the four rather than persisting one of its
+    // own, so it can never drift out of sync with them.
     void RenderAudioSection(IModLoaderImGui* ui)
     {
         if (!ui->CollapsingHeader("Audio"))
@@ -280,15 +314,18 @@ namespace
         float newValue = 0.0f;
         bool  commit   = false;
         if (RenderScaledRow(ui, "##master_vol", "Master Volume",
-                             "Sets all four drone audio volumes together. Individual volumes are on the ModLoader settings page.",
+                             "Sets all four drone audio volumes below together.",
                              DeriveMasterVolume(), 1.0f, kMasterVolumeScale, &newValue, &commit))
         {
             if (newValue < 0.0f) newValue = 0.0f;
             if (newValue > 1.0f) newValue = 1.0f;
             ApplyMasterVolumeLive(newValue);
             if (commit)
-                PersistMasterVolume(newValue);
+                PersistMasterVolume();
         }
+
+        for (int i = 0; i < DroneAudio::kVolCount; ++i)
+            RenderVolumeRow(ui, i);
 
         ui->EndTable();
     }
