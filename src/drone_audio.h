@@ -12,6 +12,10 @@ namespace DroneAudio
 
     void Initialize();
     void Shutdown();
+
+    // Drops every cached component. Call when a world ends, since nothing
+    // found in it outlives it.
+    void OnWorldEnd();
     void Tick(float deltaSeconds);
     void ApplySavedConfig();
 
