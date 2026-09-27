@@ -160,6 +160,8 @@ namespace
 
     void OnWorldEndPlay(SDK::UWorld*, const char* worldName)
     {
+        DroneAudio::OnWorldEnd();
+
         if (worldName && std::strcmp(worldName, "ChimeraMain") == 0)
             g_inGameSession = false;
     }

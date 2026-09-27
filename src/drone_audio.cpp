@@ -1,5 +1,6 @@
 #include "drone_audio.h"
 #include "drone_config.h"
+#include "object_ref.h"
 #include "plugin_helpers.h"
 #include <Chimera_classes.hpp>
 #include <atomic>
@@ -31,21 +32,30 @@ namespace DroneAudio
         float g_rescanTimer = 0.0f;
         float g_stationApplyTimer = 0.0f;
 
-        // Cached pointers from the last rescan. Re-read every kRescanSeconds;
-        // walked and compare-before-written far more often than that (see
-        // ApplyDroneVolumes/ApplyStationVolumes). A drone or station destroyed
-        // between rescans just means a stale entry sits in these lists until
-        // the next rescan drops it -- validated with a null check plus a
-        // try/catch around each use, same as this plugin's other cross-tick
-        // actor caches (e.g. BetterCheats' enemies.cpp g_enemies).
+        // Components found by the last rescan, re-read every kRescanSeconds and
+        // written far more often than that (see ApplyDroneVolumes /
+        // ApplyStationVolumes). A drone or station can be destroyed between
+        // rescans (recall, despawn, world travel), so each entry is an
+        // ObjectRef, checked on every use, never a raw pointer.
         struct CachedDrone
         {
-            SDK::UAudioComponent* idle = nullptr;
-            SDK::UAudioComponent* movement = nullptr;
-            SDK::UAudioComponent* rotation = nullptr;
+            ObjectRef<SDK::UAudioComponent> idle;
+            ObjectRef<SDK::UAudioComponent> movement;
+            ObjectRef<SDK::UAudioComponent> rotation;
         };
         std::vector<CachedDrone> g_cachedDrones;
-        std::vector<SDK::UAudioComponent*> g_cachedStationComponents;
+        std::vector<ObjectRef<SDK::UAudioComponent>> g_cachedStationComponents;
+
+        // The world the caches above were filled from. A different world
+        // means a travel happened, so everything cached belongs to the old one.
+        ObjectRef<SDK::UWorld> g_cachedWorld;
+
+        void DropCaches()
+        {
+            g_cachedDrones.clear();
+            g_cachedStationComponents.clear();
+            g_cachedWorld.Reset();
+        }
 
         bool IsActive()
         {
@@ -63,8 +73,9 @@ namespace DroneAudio
         // on/off artifact even with the volume at zero. Reading VolumeMultiplier back
         // and writing only on a real difference makes the steady state completely
         // silent.
-        void SetComponentVolume(SDK::UAudioComponent* audio, float volume)
+        void SetComponentVolume(const ObjectRef<SDK::UAudioComponent>& ref, float volume)
         {
+            SDK::UAudioComponent* audio = ref.Get();
             if (!audio) return;
             if (std::fabs(audio->VolumeMultiplier - volume) <= kActiveEpsilon) return;
 
@@ -86,13 +97,11 @@ namespace DroneAudio
         // Never called more than once per kRescanSeconds -- see Tick().
         void RescanWorld()
         {
-            g_cachedDrones.clear();
-            g_cachedStationComponents.clear();
+            DropCaches();
 
-            SDK::UWorld* world = nullptr;
-            try { world = SDK::UWorld::GetWorld(); }
-            catch (...) { return; }
+            SDK::UWorld* world = SDK::UWorld::GetWorld();
             if (!world) return;
+            g_cachedWorld.Set(world);
 
             // Piloted drone audio
             {
@@ -106,9 +115,9 @@ namespace DroneAudio
                     if (!drone) continue;
 
                     CachedDrone cached;
-                    cached.idle     = drone->IdleSound;
-                    cached.movement = drone->MovementSound;
-                    cached.rotation = drone->RotationSound;
+                    cached.idle.Set(drone->IdleSound);
+                    cached.movement.Set(drone->MovementSound);
+                    cached.rotation.Set(drone->RotationSound);
                     g_cachedDrones.push_back(cached);
                 }
             }
@@ -126,7 +135,10 @@ namespace DroneAudio
 
                     SDK::TArray<SDK::UAudioComponent*>& sounds = building->StateAudioComponents;
                     for (int32_t s = 0; s < sounds.Num(); ++s)
-                        g_cachedStationComponents.push_back(sounds[s]);
+                    {
+                        if (sounds[s])
+                            g_cachedStationComponents.emplace_back(sounds[s]);
+                    }
                 }
             }
         }
@@ -143,13 +155,9 @@ namespace DroneAudio
 
             for (const CachedDrone& cached : g_cachedDrones)
             {
-                try
-                {
-                    SetComponentVolume(cached.idle, idleVol);
-                    SetComponentVolume(cached.movement, movementVol);
-                    SetComponentVolume(cached.rotation, rotationVol);
-                }
-                catch (...) {}
+                SetComponentVolume(cached.idle, idleVol);
+                SetComponentVolume(cached.movement, movementVol);
+                SetComponentVolume(cached.rotation, rotationVol);
             }
         }
 
@@ -160,11 +168,8 @@ namespace DroneAudio
         {
             const float stationVol = g_vol[kVolStation].load(std::memory_order_relaxed);
 
-            for (SDK::UAudioComponent* audio : g_cachedStationComponents)
-            {
-                try { SetComponentVolume(audio, stationVol); }
-                catch (...) {}
-            }
+            for (const ObjectRef<SDK::UAudioComponent>& audio : g_cachedStationComponents)
+                SetComponentVolume(audio, stationVol);
         }
 
         void ReadAudioConfig()
@@ -185,12 +190,13 @@ namespace DroneAudio
 
     void Shutdown()
     {
-        // Cached pointers are only ever dereferenced from Tick() (game thread).
-        // RELOAD runs plugin shutdown on the render thread, so this must not
-        // touch the UObjects behind them -- dropping the pointers themselves
-        // is plain memory, safe from any thread.
-        g_cachedDrones.clear();
-        g_cachedStationComponents.clear();
+        // Plain memory only -- none of the objects behind these are touched.
+        DropCaches();
+    }
+
+    void OnWorldEnd()
+    {
+        DropCaches();
     }
 
     void ApplySavedConfig()
@@ -235,6 +241,11 @@ namespace DroneAudio
 
         if (!IsActive())
             return;
+
+        // A travel since the last rescan: nothing cached belongs to this
+        // world, so rescan now rather than write to the old world's leftovers.
+        if (g_cachedWorld.Get() != SDK::UWorld::GetWorld())
+            g_rescanTimer = kRescanSeconds;
 
         g_rescanTimer += deltaSeconds;
         if (g_rescanTimer >= kRescanSeconds)
