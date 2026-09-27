@@ -123,6 +123,7 @@
     <ClInclude Include="drone_sprint_key.h" />
     <ClInclude Include="drone_ui.h" />
     <ClInclude Include="drone_wave_patch.h" />
+    <ClInclude Include="object_ref.h" />
     <ClInclude Include="plugin_helpers.h" />
     <ClInclude Include="ui_widgets.h" />
   </ItemGroup>
