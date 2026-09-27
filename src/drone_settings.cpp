@@ -38,6 +38,11 @@ namespace
 
     float g_currentEffectiveSpeed = 0.0f;
 
+    // Last base speed OnDroneTick observed, so a slider/preset/config change
+    // can be told apart from the boost multiplier moving the target. -1
+    // guarantees the first tick after load counts as a change.
+    float g_lastBaseSpeed = -1.0f;
+
     // The two names actually registered: Pressed on the full combo, Released
     // on its bare base key (see RegisterBoostKeyName). Kept separately so
     // Unregister always matches what was registered.
@@ -396,7 +401,8 @@ void OnDroneTick(float deltaSeconds)
     const bool inDrone = IsLocalPlayerInDrone();
     g_lastKnownInDrone.store(inDrone, std::memory_order_relaxed);
 
-    if (inDrone && !g_wasInDrone)
+    const bool justEnteredDrone = inDrone && !g_wasInDrone;
+    if (justEnteredDrone)
     {
         needsInstanceUpdate = true;
 
@@ -416,6 +422,9 @@ void OnDroneTick(float deltaSeconds)
     const bool boostActive = held && inDrone;
 
     const float baseSpeed = DroneConfig::Config::ReadSpeedPerSec();
+    const bool baseSpeedChanged = std::fabs(baseSpeed - g_lastBaseSpeed) > 0.01f;
+    g_lastBaseSpeed = baseSpeed;
+
     float targetSpeed = boostActive ? baseSpeed * DroneConfig::Config::ReadBoostMultiplier() : baseSpeed;
     if (targetSpeed > DroneConfig::Config::MaxSpeedPerSec())
         targetSpeed = DroneConfig::Config::MaxSpeedPerSec();
@@ -428,17 +437,20 @@ void OnDroneTick(float deltaSeconds)
     }
 
     // Acceleration/Deceleration are clamped to a floor above 0 (DroneConfig,
-    // kMinAccelDecel), so there is no longer a snap path here to fall back
-    // to -- every speed change, boost or otherwise, ramps.
+    // kMinAccelDecel) and still govern the boost engage/disengage edge. A
+    // base-speed change (slider, preset, config load, entering the drone)
+    // snaps straight to target instead -- the ramp is only meant to smooth
+    // boost, not gate every speed change.
     const float accel = DroneConfig::Config::ReadAcceleration();
     const float decel = DroneConfig::Config::ReadDeceleration();
 
-    if (g_currentEffectiveSpeed <= 0.0f)
-        g_currentEffectiveSpeed = baseSpeed;
-
     const bool wasAtTarget = std::fabs(g_currentEffectiveSpeed - targetSpeed) <= 0.01f;
 
-    if (g_currentEffectiveSpeed < targetSpeed)
+    if (baseSpeedChanged || justEnteredDrone)
+    {
+        g_currentEffectiveSpeed = targetSpeed;
+    }
+    else if (g_currentEffectiveSpeed < targetSpeed)
     {
         g_currentEffectiveSpeed += accel * deltaSeconds;
         if (g_currentEffectiveSpeed > targetSpeed)
