@@ -26,8 +26,8 @@
 //     ActivateBuildingDrone unbinds in favour of the Drone config, so the key
 //     may never reach ACrPlayerControllerBase::NativeOnInputInteract at all.
 //
-// InitDroneInteract hooks around the first and supplies the second from the
-// modloader's own keybind dispatch.
+// InitDroneInteract hooks around the first two and supplies the third from
+// the modloader's own keybind dispatch.
 //
 // The map key is lost the same way as the third point: its handler,
 // UCrInputNativeMapMenu, belongs to the unbound on-foot config, and the
