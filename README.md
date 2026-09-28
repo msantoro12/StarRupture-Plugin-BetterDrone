@@ -23,6 +23,10 @@ The warning thresholds (the visual indicators before hitting the limit) are auto
 
 Normally you have to walk up to a building on foot to press **E** and open its UI — the game clears the interaction target for as long as the drone is out, and measures interaction range from your body rather than the drone. With this plugin the drone can do it too: fly up to a building, look at it, and press the interact key.
 
+### Opening the map from the drone
+
+The game's map key does nothing while the drone is out. With this plugin, pressing the map key while flying opens the map without dismounting.
+
 ---
 
 ## Configuration
@@ -39,8 +43,10 @@ Config is stored in `Plugins\config\BetterDrone.ini` and is generated on first l
 |---|---|
 | `Interact In Drone Mode` | Let the drone open building UIs (default `true`) |
 | `Interact Key` | Key used to interact while the drone is out (default `E`) — set this to match your in-game interact key |
+| `Map In Drone Mode` | Let the drone open the map (default `true`) |
+| `Map Key` | Key used to open the map while the drone is out (default `M`) — set this to match your in-game map key |
 
-Changes are applied live — no restart required, except `Interact Key`, which is picked up on the next launch.
+Changes are applied live — no restart required, except `Interact Key` and `Map Key`, which are picked up on the next launch.
 
 ---
 
