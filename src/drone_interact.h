@@ -1,7 +1,8 @@
 #pragma once
 
 // Lets the player open a building's UI while flying the building drone, the
-// same way walking up to it and pressing the interact key does on foot.
+// same way walking up to it and pressing the interact key does on foot, and
+// open the map without dismounting.
 //
 // Three separate things stop this in the stock game:
 //
@@ -27,6 +28,11 @@
 //
 // InitDroneInteract hooks around the first and supplies the second from the
 // modloader's own keybind dispatch.
+//
+// The map key is lost the same way as the third point: its handler,
+// UCrInputNativeMapMenu, belongs to the unbound on-foot config, and the
+// controller function behind it has no drone check of its own.
+// InitDroneMap supplies that key from the keybind dispatch as well.
 
 struct IPluginSelf;
 struct IPluginHookScanner;
@@ -38,6 +44,13 @@ void ResolveDroneInteract(IPluginSelf* self, IPluginHookScanner* scanner);
 bool InitDroneInteract();
 
 void ShutdownDroneInteract();
+
+// Same contract as ResolveDroneInteract, for the map path.
+void ResolveDroneMap(IPluginSelf* self, IPluginHookScanner* scanner);
+
+bool InitDroneMap();
+
+void ShutdownDroneMap();
 
 // Game thread only.
 bool IsLocalPlayerInDrone();

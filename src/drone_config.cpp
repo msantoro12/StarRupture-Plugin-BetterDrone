@@ -174,6 +174,20 @@ namespace DroneConfig
                 self->config->WriteString(self, "Controls", "BoostKey", kBoostKeyFollowsSprint);
         }
 
+        // A keybind entry, or its default when the entry is missing or empty.
+        void ReadKeybind(IPluginSelf* self, const char* section, const char* key, const char* fallback,
+                         char* outBuffer, int bufferSize)
+        {
+            if (!outBuffer || bufferSize <= 0) return;
+            outBuffer[0] = '\0';
+            if (!self ||
+                !self->config->ReadString(self, section, key, outBuffer, bufferSize, fallback) ||
+                outBuffer[0] == '\0')
+            {
+                snprintf(outBuffer, static_cast<size_t>(bufferSize), "%s", fallback);
+            }
+        }
+
         // In-memory mirror of one panel-file float. Loaded once in
         // Config::Initialize; every Read after that is a plain atomic load
         // -- OnDroneTick calls several of these every tick, and the file
@@ -302,6 +316,8 @@ namespace DroneConfig
             { "Drone",       "Always Allow Drone",     ConfigValueType::Boolean, "false",     "Allow the building drone in places it's normally blocked, including wave events.", 0.0f, 1.0f },
             { "Interaction", "Interact In Drone Mode", ConfigValueType::Boolean, "true",      "Opens nearby containers and doors from the drone without dismounting. The camera does not recenter when the prompt appears.", 0.0f, 1.0f },
             { "Interaction", "Interact Key",           ConfigValueType::Keybind, "E",         "Key that triggers interaction while the drone is out, matching the game's own interact key.", 0.0f, 0.0f },
+            { "Interaction", "Map In Drone Mode",      ConfigValueType::Boolean, "true",      "Opens the map from the drone without dismounting.", 0.0f, 1.0f },
+            { "Interaction", "Map Key",                ConfigValueType::Keybind, "M",         "Key that opens the map while the drone is out. Set it to the game's own map key.", 0.0f, 0.0f },
             // Matches BetterCheats' own ToggleKey default on purpose, so one
             // F10 press opens both panels. The loader dispatches a keypress
             // to every plugin registered on it, not just one, so this is safe.
@@ -325,38 +341,27 @@ namespace DroneConfig
 
     void Config::ReadInteractKey(char* outBuffer, int bufferSize)
     {
-        if (!outBuffer || bufferSize <= 0) return;
-        outBuffer[0] = '\0';
-        if (!s_self ||
-            !s_self->config->ReadString(s_self, "Interaction", "Interact Key", outBuffer, bufferSize, "E") ||
-            outBuffer[0] == '\0')
-        {
-            snprintf(outBuffer, static_cast<size_t>(bufferSize), "E");
-        }
+        ReadKeybind(s_self, "Interaction", "Interact Key", "E", outBuffer, bufferSize);
+    }
+
+    bool Config::ReadMapInDroneMode()
+    {
+        return s_self ? s_self->config->ReadBool(s_self, "Interaction", "Map In Drone Mode", true) : false;
+    }
+
+    void Config::ReadMapKey(char* outBuffer, int bufferSize)
+    {
+        ReadKeybind(s_self, "Interaction", "Map Key", "M", outBuffer, bufferSize);
     }
 
     void Config::ReadToggleKey(char* outBuffer, int bufferSize)
     {
-        if (!outBuffer || bufferSize <= 0) return;
-        outBuffer[0] = '\0';
-        if (!s_self ||
-            !s_self->config->ReadString(s_self, "Controls", "ToggleKey", outBuffer, bufferSize, "F10") ||
-            outBuffer[0] == '\0')
-        {
-            snprintf(outBuffer, static_cast<size_t>(bufferSize), "F10");
-        }
+        ReadKeybind(s_self, "Controls", "ToggleKey", "F10", outBuffer, bufferSize);
     }
 
     void Config::ReadBoostKey(char* outBuffer, int bufferSize)
     {
-        if (!outBuffer || bufferSize <= 0) return;
-        outBuffer[0] = '\0';
-        if (!s_self ||
-            !s_self->config->ReadString(s_self, "Controls", "BoostKey", outBuffer, bufferSize, kBoostKeyFollowsSprint) ||
-            outBuffer[0] == '\0')
-        {
-            snprintf(outBuffer, static_cast<size_t>(bufferSize), "%s", kBoostKeyFollowsSprint);
-        }
+        ReadKeybind(s_self, "Controls", "BoostKey", kBoostKeyFollowsSprint, outBuffer, bufferSize);
     }
 
     float Config::ReadSpeedPerSec()               { return g_speedPerSec.Read(); }
