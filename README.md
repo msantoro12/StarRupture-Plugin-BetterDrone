@@ -25,7 +25,7 @@ Normally you have to walk up to a building on foot to press **E** and open its U
 
 ### Opening the map from the drone
 
-The game's map key does nothing while the drone is out. With this plugin, pressing the map key while flying opens the map without dismounting.
+The game's map key does nothing while the drone is out. With this plugin, pressing the map key while flying opens the map.
 
 ---
 

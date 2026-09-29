@@ -2,7 +2,7 @@
 
 // Lets the player open a building's UI while flying the building drone, the
 // same way walking up to it and pressing the interact key does on foot, and
-// open the map without dismounting.
+// open the map.
 //
 // Three separate things stop this in the stock game:
 //

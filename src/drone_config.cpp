@@ -314,9 +314,9 @@ namespace DroneConfig
 
         static const ConfigEntry entries[] = {
             { "Drone",       "Always Allow Drone",     ConfigValueType::Boolean, "false",     "Allow the building drone in places it's normally blocked, including wave events.", 0.0f, 1.0f },
-            { "Interaction", "Interact In Drone Mode", ConfigValueType::Boolean, "true",      "Opens nearby containers and doors from the drone without dismounting. The camera does not recenter when the prompt appears.", 0.0f, 1.0f },
+            { "Interaction", "Interact In Drone Mode", ConfigValueType::Boolean, "true",      "Opens nearby containers and doors from the drone. The camera does not recenter when the prompt appears.", 0.0f, 1.0f },
             { "Interaction", "Interact Key",           ConfigValueType::Keybind, "E",         "Key that triggers interaction while the drone is out, matching the game's own interact key.", 0.0f, 0.0f },
-            { "Interaction", "Map In Drone Mode",      ConfigValueType::Boolean, "true",      "Opens the map from the drone without dismounting.", 0.0f, 1.0f },
+            { "Interaction", "Map In Drone Mode",      ConfigValueType::Boolean, "true",      "Opens the map from the drone.", 0.0f, 1.0f },
             { "Interaction", "Map Key",                ConfigValueType::Keybind, "M",         "Key that opens the map while the drone is out. Set it to the game's own map key.", 0.0f, 0.0f },
             // Matches BetterCheats' own ToggleKey default on purpose, so one
             // F10 press opens both panels. The loader dispatches a keypress
