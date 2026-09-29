@@ -408,16 +408,14 @@ namespace
     // on another layer, so an empty stack here means no menu is up.
     constexpr const char* kMenuLayerTag = "UI.Layer.Menu";
 
-    // The map handler never checks what is already on screen, so it would
-    // push the map on top of any of those. A widget stays on the stack's
-    // WidgetList until it has finished closing.
-    bool IsMenuOpen(SDK::ACrPlayerControllerBase* pc)
+    // The local player's menu layer, or null. Valid for the current tick only.
+    SDK::UCommonActivatableWidgetContainerBase* FindMenuLayer(SDK::ACrPlayerControllerBase* pc)
     {
         auto* ui = static_cast<SDK::UGameUIManagerSubsystem*>(
             SDK::USubsystemBlueprintLibrary::GetGameInstanceSubsystem(pc, SDK::UCrUIManagerSubsystem::StaticClass()));
         SDK::UGameUIPolicy* policy = ui ? ui->CurrentPolicy : nullptr;
         if (!policy)
-            return false;
+            return nullptr;
 
         for (int32_t i = 0; i < policy->RootViewportLayouts.Num(); ++i)
         {
@@ -432,16 +430,24 @@ namespace
                 if (!layers.IsValidIndex(l))
                     continue;
 
-                const SDK::UCommonActivatableWidgetContainerBase* stack = layers[l].Value();
-                if (!stack || layers[l].Key().TagName.ToString() != kMenuLayerTag)
-                    continue;
-
-                if (stack->WidgetList.Num() > 0)
-                    return true;
+                SDK::UCommonActivatableWidgetContainerBase* stack = layers[l].Value();
+                if (stack && layers[l].Key().TagName.ToString() == kMenuLayerTag)
+                    return stack;
             }
         }
 
-        return false;
+        return nullptr;
+    }
+
+    // The map, if it is the active widget on the menu layer and not already
+    // closing. DisplayedWidget is what the stack's GetActiveWidget returns.
+    SDK::UCrUW_MapMenu* ActiveMap(SDK::UCommonActivatableWidgetContainerBase* layer)
+    {
+        SDK::UCommonActivatableWidget* top = layer->DisplayedWidget;
+        if (!top || !top->bIsActive || !top->IsA(SDK::UCrUW_MapMenu::StaticClass()))
+            return nullptr;
+
+        return static_cast<SDK::UCrUW_MapMenu*>(top);
     }
 
     // Idle until the map key is pressed, then tracks the menu layer only
@@ -459,11 +465,31 @@ namespace
 
         // On foot the game opens the map itself, so this stays out of it.
         const bool inDrone = character && character->Status == SDK::EPlayerCharacterStatus::BuildingDrone;
-        const bool open    = inDrone && IsMenuOpen(pc);
+
+        // The map handler never checks what is already on screen, so it
+        // would push the map on top of any other menu. A widget stays on
+        // the stack's WidgetList until it has finished closing.
+        SDK::UCommonActivatableWidgetContainerBase* layer = inDrone ? FindMenuLayer(pc) : nullptr;
+        const bool open    = layer && layer->WidgetList.Num() > 0;
         const bool wasOpen = g_menuWasOpen.exchange(open);
 
         // Read only on a press, never per tick: it is an INI read.
-        if (!press || !inDrone || open || wasOpen || !DroneConfig::Config::ReadMapInDroneMode())
+        if (!press || !inDrone || !DroneConfig::Config::ReadMapInDroneMode())
+            return;
+
+        if (open)
+        {
+            // In drone mode the game's map toggle never reaches the map, so
+            // the key would only close it on foot. Close it the way its own
+            // close button and back action do: both end in
+            // UCrUIManagerSubsystem::CloseMainWidgetByClass, which also puts
+            // the input config back to the game. Any other menu is left alone.
+            if (SDK::UCrUW_MapMenu* map = ActiveMap(layer))
+                map->HandleOnExitClicked();
+            return;
+        }
+
+        if (wasOpen)
             return;
 
         const PressedActionValue value;
