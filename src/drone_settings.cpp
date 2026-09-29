@@ -21,7 +21,7 @@ namespace
     // Written by the keybind callback, acted on in OnDroneTick.
     std::atomic<bool> g_boostKeyHeld{ false };
 
-    // The custom key's VK (KeyNameToVk), or, whenever BoostKey is
+    // The custom key's VK (KeyNameToVk), or, whenever Boost Key is
     // DroneConfig::kBoostKeyFollowsSprint, the resolved Sprint key's VK.
     // OnDroneTick polls this as a fallback alongside the loader's own
     // dispatch -- needed outright for a bare modifier, which the loader
@@ -29,7 +29,7 @@ namespace
     // no keybind with the loader at all.
     std::atomic<int> g_boostKeyVk{ 0 };
 
-    // True when BoostKey is DroneConfig::kBoostKeyFollowsSprint and boost is
+    // True when Boost Key is DroneConfig::kBoostKeyFollowsSprint and boost is
     // following the resolved Sprint key instead of a registered custom
     // keybind.
     std::atomic<bool> g_boostFollowsSprint{ false };

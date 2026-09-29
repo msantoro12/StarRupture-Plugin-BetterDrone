@@ -3,7 +3,7 @@
 
 namespace DroneConfig
 {
-    // BoostKey's value when boost follows the game's own Sprint binding
+    // Boost Key's value when boost follows the game's own Sprint binding
     // instead of a custom keybind. The one spelling shared by the schema
     // default, the migration, and drone_settings.cpp's registration check.
     constexpr const char* kBoostKeyFollowsSprint = "Sprint";

@@ -34,7 +34,7 @@ void ShutdownGameSessionTracking(IPluginSelf* self);
 
 void OnDroneTick(float deltaSeconds);
 
-// Reads BoostKey from config and applies it: a custom combo, or following
+// Reads Boost Key from config and applies it: a custom combo, or following
 // the game's Sprint key if it's DroneConfig::kBoostKeyFollowsSprint.
 void RegisterBoostKey(IPluginSelf* self);
 void UnregisterBoostKey(IPluginSelf* self);
@@ -42,7 +42,7 @@ void UnregisterBoostKey(IPluginSelf* self);
 // Unregisters the current boost key and applies newKeyName in its place: a
 // custom combo, or following the game's Sprint key if newKeyName is
 // DroneConfig::kBoostKeyFollowsSprint. Call from a live rebind
-// (OnConfigChanged for Controls/BoostKey) instead of relying on the
+// (OnConfigChanged for Controls/Boost Key) instead of relying on the
 // loader's own UpdateKeybindByName, which only patches a registration
 // whose stored combo string matches the old value exactly -- the Released
 // half is registered under the bare base key, not the full combo, so it

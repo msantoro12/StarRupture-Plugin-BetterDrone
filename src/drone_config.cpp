@@ -169,9 +169,26 @@ namespace DroneConfig
         void MigrateBoostKeyIfNeeded(IPluginSelf* self)
         {
             char current[64] = {};
-            self->config->ReadString(self, "Controls", "BoostKey", current, sizeof(current), kBoostKeyFollowsSprint);
+            self->config->ReadString(self, "Controls", "Boost Key", current, sizeof(current), kBoostKeyFollowsSprint);
             if (current[0] == '\0' || strcmp(current, "LeftShift") == 0)
-                self->config->WriteString(self, "Controls", "BoostKey", kBoostKeyFollowsSprint);
+                self->config->WriteString(self, "Controls", "Boost Key", kBoostKeyFollowsSprint);
+        }
+
+        // Earlier builds spelled the Controls keys "ToggleKey" and "BoostKey".
+        // Registering the schema drops keys it doesn't list, so a value saved
+        // under an old name is copied to the new one first. Runs every load;
+        // once the new key holds a value it is left alone.
+        void MigrateRenamedKey(IPluginSelf* self, const char* section, const char* oldKey, const char* newKey)
+        {
+            char value[64] = {};
+            self->config->ReadString(self, section, oldKey, value, sizeof(value), "");
+            if (value[0] == '\0')
+                return;
+
+            char current[64] = {};
+            self->config->ReadString(self, section, newKey, current, sizeof(current), "");
+            if (current[0] == '\0')
+                self->config->WriteString(self, section, newKey, value);
         }
 
         // A keybind entry, or its default when the entry is missing or empty.
@@ -282,6 +299,8 @@ namespace DroneConfig
             return;
 
         MigratePanelSettingsIfNeeded(s_self);
+        MigrateRenamedKey(s_self, "Controls", "ToggleKey", "Toggle Key");
+        MigrateRenamedKey(s_self, "Controls", "BoostKey",  "Boost Key");
         MigrateBoostKeyIfNeeded(s_self);
 
         g_speedPerSec.Init("Drone", "SpeedPerSec", kMinSpeedPerSec, kMaxSpeedPerSec,
@@ -321,8 +340,8 @@ namespace DroneConfig
             // Matches BetterCheats' own ToggleKey default on purpose, so one
             // F10 press opens both panels. The loader dispatches a keypress
             // to every plugin registered on it, not just one, so this is safe.
-            { "Controls",    "ToggleKey",              ConfigValueType::Keybind, "F10",        "Key to toggle the BetterDrone menu window", 0.0f, 0.0f },
-            { "Controls",    "BoostKey",               ConfigValueType::Keybind, kBoostKeyFollowsSprint, "Key held to boost drone speed, following your Sprint key unless you set one here.", 0.0f, 0.0f },
+            { "Controls",    "Toggle Key",             ConfigValueType::Keybind, "F10",        "Key to toggle the BetterDrone menu window", 0.0f, 0.0f },
+            { "Controls",    "Boost Key",              ConfigValueType::Keybind, kBoostKeyFollowsSprint, "Key held to boost drone speed, following your Sprint key unless you set one here.", 0.0f, 0.0f },
         };
         static const ConfigSchema schema{ entries, static_cast<int>(sizeof(entries) / sizeof(entries[0])) };
 
@@ -356,12 +375,12 @@ namespace DroneConfig
 
     void Config::ReadToggleKey(char* outBuffer, int bufferSize)
     {
-        ReadKeybind(s_self, "Controls", "ToggleKey", "F10", outBuffer, bufferSize);
+        ReadKeybind(s_self, "Controls", "Toggle Key", "F10", outBuffer, bufferSize);
     }
 
     void Config::ReadBoostKey(char* outBuffer, int bufferSize)
     {
-        ReadKeybind(s_self, "Controls", "BoostKey", kBoostKeyFollowsSprint, outBuffer, bufferSize);
+        ReadKeybind(s_self, "Controls", "Boost Key", kBoostKeyFollowsSprint, outBuffer, bufferSize);
     }
 
     float Config::ReadSpeedPerSec()               { return g_speedPerSec.Read(); }
