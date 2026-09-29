@@ -395,24 +395,29 @@ namespace
     // Raised by the keybind callback, consumed on the game thread in OnMapTick.
     std::atomic<bool> g_pendingMapPress{ false };
 
-    // Whether the map was open as of the previous tick. Menu input is
+    // Whether a menu was open as of the previous tick. Menu input is
     // handled before the world ticks, so when the map key also closes the
     // map, OnMapTick sees that press only after the map is already gone.
     // Judged on the current state alone, it would open the map straight
     // back up.
-    std::atomic<bool> g_mapWasOpen{ false };
+    std::atomic<bool> g_menuWasOpen{ false };
 
-    // The map screen is pushed onto one of the primary layout's layer
-    // stacks, and taken off that stack's WidgetList when it closes.
-    bool IsMapMenuOpen(SDK::ACrPlayerControllerBase* pc)
+    // The layer UCrUIManagerSubsystem opens the map, the inventory and
+    // every building window on, and the one it opens the death screen on.
+    // The HUD layout pushes its escape menu there too. The HUD itself sits
+    // on another layer, so an empty stack here means no menu is up.
+    constexpr const char* kMenuLayerTag = "UI.Layer.Menu";
+
+    // The map handler never checks what is already on screen, so it would
+    // push the map on top of any of those. A widget stays on the stack's
+    // WidgetList until it has finished closing.
+    bool IsMenuOpen(SDK::ACrPlayerControllerBase* pc)
     {
         auto* ui = static_cast<SDK::UGameUIManagerSubsystem*>(
             SDK::USubsystemBlueprintLibrary::GetGameInstanceSubsystem(pc, SDK::UCrUIManagerSubsystem::StaticClass()));
         SDK::UGameUIPolicy* policy = ui ? ui->CurrentPolicy : nullptr;
         if (!policy)
             return false;
-
-        const SDK::UClass* mapClass = SDK::UCrUW_MapMenu::StaticClass();
 
         for (int32_t i = 0; i < policy->RootViewportLayouts.Num(); ++i)
         {
@@ -428,28 +433,25 @@ namespace
                     continue;
 
                 const SDK::UCommonActivatableWidgetContainerBase* stack = layers[l].Value();
-                if (!stack)
+                if (!stack || layers[l].Key().TagName.ToString() != kMenuLayerTag)
                     continue;
 
-                for (int32_t w = 0; w < stack->WidgetList.Num(); ++w)
-                {
-                    const SDK::UCommonActivatableWidget* widget = stack->WidgetList[w];
-                    if (widget && widget->IsA(mapClass))
-                        return true;
-                }
+                if (stack->WidgetList.Num() > 0)
+                    return true;
             }
         }
 
         return false;
     }
 
-    // Idle until the map key is pressed, then tracks the map only while it
-    // is open. Everything is looked up fresh each tick: the controller and
-    // the widgets can go away with the drone, travel or GC.
+    // Idle until the map key is pressed, then tracks the menu layer only
+    // while something is on it. Everything is looked up fresh each tick:
+    // the controller and the widgets can go away with the drone, travel or
+    // GC.
     void OnMapTick(float)
     {
         const bool press = g_pendingMapPress.exchange(false);
-        if (!press && !g_mapWasOpen.load(std::memory_order_relaxed))
+        if (!press && !g_menuWasOpen.load(std::memory_order_relaxed))
             return;
 
         SDK::ACrPlayerControllerBase* pc        = LocalController();
@@ -457,8 +459,8 @@ namespace
 
         // On foot the game opens the map itself, so this stays out of it.
         const bool inDrone = character && character->Status == SDK::EPlayerCharacterStatus::BuildingDrone;
-        const bool open    = inDrone && IsMapMenuOpen(pc);
-        const bool wasOpen = g_mapWasOpen.exchange(open);
+        const bool open    = inDrone && IsMenuOpen(pc);
+        const bool wasOpen = g_menuWasOpen.exchange(open);
 
         // Read only on a press, never per tick: it is an INI read.
         if (!press || !inDrone || open || wasOpen || !DroneConfig::Config::ReadMapInDroneMode())
@@ -469,7 +471,7 @@ namespace
             pc, reinterpret_cast<const SDK::FInputActionValue*>(&value));
 
         // Settled against the real state from the next tick on.
-        g_mapWasOpen.store(true, std::memory_order_relaxed);
+        g_menuWasOpen.store(true, std::memory_order_relaxed);
     }
 
     void OnMapKey(EModKey, EModKeyEvent)
@@ -479,11 +481,11 @@ namespace
 }
 
 // Every address this file resolves is a function entry, so each request
-// declares PLUGIN_SCAN_FUNCTION_START: most get a detour written over them,
-// and the map handler is called directly. The loader then checks the match
-// against the executable's exception directory instead of trusting that the
-// bytes lined up -- a pattern that drifted into the middle of some other
-// function is refused rather than used.
+// declares PLUGIN_SCAN_FUNCTION_START: three get a detour written over them,
+// and NativeOnInputInteract and the map handler are called directly. The
+// loader then checks the match against the executable's exception directory
+// instead of trusting that the bytes lined up -- a pattern that drifted into
+// the middle of some other function is refused rather than used.
 static uintptr_t ResolveFunction(IPluginSelf* self, IPluginHookScanner* scanner,
                                  const char* hookName, const char* pattern)
 {
@@ -615,5 +617,5 @@ void ShutdownDroneMap()
     GetSelf()->hooks->Engine->UnregisterOnTick(OnMapTick);
 
     g_pendingMapPress.store(false, std::memory_order_relaxed);
-    g_mapWasOpen.store(false, std::memory_order_relaxed);
+    g_menuWasOpen.store(false, std::memory_order_relaxed);
 }
