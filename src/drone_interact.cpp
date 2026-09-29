@@ -3,6 +3,9 @@
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
 #include <Chimera_classes.hpp>
+#include <ChimeraUI_classes.hpp>
+#include <CommonGame_classes.hpp>
+#include <EnhancedInput_structs.hpp>
 #include <Engine_classes.hpp>
 #include <atomic>
 #include <windows.h>
@@ -360,13 +363,129 @@ namespace
             g_origTargetsChanged = nullptr;
         }
     }
+
+    // ACrPlayerControllerBase's handler for the Map input action; the name
+    // follows NativeOnInputInteract's. UCrInputNativeMapMenu's triggered
+    // override calls it with the pawn's controller and the action value.
+    // It never looks at the drone: it re-shows the HUD, stops only if the
+    // map is not unlocked yet, broadcasts the event ACrHUD opens the map
+    // screen from, and sends ServerOnInputMapMenu.
+    typedef void (__fastcall* NativeOnInputMapMenu_t)(void* pc, const SDK::FInputActionValue* value);
+
+    // Resolved during OnPluginLoadHooks; 0 means the pattern missed on this build.
+    uintptr_t g_addrMapMenu = 0;
+
+    constexpr const char* kMapMenuPattern =
+        "48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC 20 48 8B F2 48 8B D9 E8 ?? ?? ?? ?? "
+        "48 85 C0 74 ?? 48 8B CB E8 ?? ?? ?? ?? F6 80 ?? ?? ?? ?? 02";
+
+    // FInputActionValue is opaque in the SDK. Its layout is an FVector and
+    // then EInputActionValueType, and the handler only reads the vector's
+    // length. This is the value a key press delivers.
+    struct PressedActionValue
+    {
+        double                     value[3] = { 1.0, 0.0, 0.0 };
+        SDK::EInputActionValueType type     = SDK::EInputActionValueType::Boolean;
+    };
+    static_assert(sizeof(PressedActionValue) == sizeof(SDK::FInputActionValue),
+                  "FInputActionValue layout changed");
+
+    char g_mapKeyName[64] = {};
+
+    // Raised by the keybind callback, consumed on the game thread in OnMapTick.
+    std::atomic<bool> g_pendingMapPress{ false };
+
+    // Whether a menu was open as of the previous tick. Menu input is
+    // handled before the world ticks, so when the map key also closes the
+    // map, OnMapTick sees that press only after the map is already gone.
+    // Judged on the current state alone, it would open the map straight
+    // back up.
+    std::atomic<bool> g_menuWasOpen{ false };
+
+    // The layer UCrUIManagerSubsystem opens the map, the inventory and
+    // every building window on, and the one it opens the death screen on.
+    // The HUD layout pushes its escape menu there too. The HUD itself sits
+    // on another layer, so an empty stack here means no menu is up.
+    constexpr const char* kMenuLayerTag = "UI.Layer.Menu";
+
+    // The map handler never checks what is already on screen, so it would
+    // push the map on top of any of those. A widget stays on the stack's
+    // WidgetList until it has finished closing.
+    bool IsMenuOpen(SDK::ACrPlayerControllerBase* pc)
+    {
+        auto* ui = static_cast<SDK::UGameUIManagerSubsystem*>(
+            SDK::USubsystemBlueprintLibrary::GetGameInstanceSubsystem(pc, SDK::UCrUIManagerSubsystem::StaticClass()));
+        SDK::UGameUIPolicy* policy = ui ? ui->CurrentPolicy : nullptr;
+        if (!policy)
+            return false;
+
+        for (int32_t i = 0; i < policy->RootViewportLayouts.Num(); ++i)
+        {
+            const SDK::FRootViewportLayoutInfo& info = policy->RootViewportLayouts[i];
+            if (!info.RootLayout || info.LocalPlayer != pc->Player)
+                continue;
+
+            // Not const: the SDK's const TMap indexer does not compile.
+            auto& layers = info.RootLayout->Layers;
+            for (int32_t l = 0; l < layers.NumAllocated(); ++l)
+            {
+                if (!layers.IsValidIndex(l))
+                    continue;
+
+                const SDK::UCommonActivatableWidgetContainerBase* stack = layers[l].Value();
+                if (!stack || layers[l].Key().TagName.ToString() != kMenuLayerTag)
+                    continue;
+
+                if (stack->WidgetList.Num() > 0)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Idle until the map key is pressed, then tracks the menu layer only
+    // while something is on it. Everything is looked up fresh each tick:
+    // the controller and the widgets can go away with the drone, travel or
+    // GC.
+    void OnMapTick(float)
+    {
+        const bool press = g_pendingMapPress.exchange(false);
+        if (!press && !g_menuWasOpen.load(std::memory_order_relaxed))
+            return;
+
+        SDK::ACrPlayerControllerBase* pc        = LocalController();
+        SDK::ACrCharacterPlayerBase*  character = pc ? pc->CrChar : nullptr;
+
+        // On foot the game opens the map itself, so this stays out of it.
+        const bool inDrone = character && character->Status == SDK::EPlayerCharacterStatus::BuildingDrone;
+        const bool open    = inDrone && IsMenuOpen(pc);
+        const bool wasOpen = g_menuWasOpen.exchange(open);
+
+        // Read only on a press, never per tick: it is an INI read.
+        if (!press || !inDrone || open || wasOpen || !DroneConfig::Config::ReadMapInDroneMode())
+            return;
+
+        const PressedActionValue value;
+        reinterpret_cast<NativeOnInputMapMenu_t>(g_addrMapMenu)(
+            pc, reinterpret_cast<const SDK::FInputActionValue*>(&value));
+
+        // Settled against the real state from the next tick on.
+        g_menuWasOpen.store(true, std::memory_order_relaxed);
+    }
+
+    void OnMapKey(EModKey, EModKeyEvent)
+    {
+        g_pendingMapPress.store(true, std::memory_order_relaxed);
+    }
 }
 
-// Every address this file resolves is a function entry that a detour gets
-// written over, so each request declares PLUGIN_SCAN_FUNCTION_START. The loader
-// then checks the match against the executable's exception directory instead of
-// trusting that the bytes lined up -- a pattern that drifted into the middle of
-// some other function is refused rather than detoured.
+// Every address this file resolves is a function entry, so each request
+// declares PLUGIN_SCAN_FUNCTION_START: three get a detour written over them,
+// and NativeOnInputInteract and the map handler are called directly. The
+// loader then checks the match against the executable's exception directory
+// instead of trusting that the bytes lined up -- a pattern that drifted into
+// the middle of some other function is refused rather than used.
 static uintptr_t ResolveFunction(IPluginSelf* self, IPluginHookScanner* scanner,
                                  const char* hookName, const char* pattern)
 {
@@ -453,4 +572,50 @@ void ShutdownDroneInteract()
     g_pendingRelease.store(false, std::memory_order_relaxed);
 
     LOG_DEBUG("DroneInteract: hooks removed");
+}
+
+void ResolveDroneMap(IPluginSelf* self, IPluginHookScanner* scanner)
+{
+    if (!self || !scanner)
+        return;
+
+    g_addrMapMenu = ResolveFunction(self, scanner,
+        "ACrPlayerControllerBase::NativeOnInputMapMenu", kMapMenuPattern);
+}
+
+bool InitDroneMap()
+{
+    if (!g_addrMapMenu)
+    {
+        LOG_WARN("DroneMap: NativeOnInputMapMenu unresolved — the map will not open from the drone");
+        return false;
+    }
+
+    auto* input = GetSelf()->hooks->Input;
+    if (!input)
+    {
+        LOG_WARN("DroneMap: no input dispatch — the map key will not reach drone mode");
+        return false;
+    }
+
+    GetSelf()->hooks->Engine->RegisterOnTick(OnMapTick);
+
+    DroneConfig::Config::ReadMapKey(g_mapKeyName, sizeof(g_mapKeyName));
+    input->RegisterKeybindByName(g_mapKeyName, EModKeyEvent::Pressed, &OnMapKey);
+
+    LOG_INFO("DroneMap: NativeOnInputMapMenu at 0x%llX, map enabled in drone mode on '%s'",
+             g_addrMapMenu, g_mapKeyName);
+    return true;
+}
+
+void ShutdownDroneMap()
+{
+    auto* input = GetSelf()->hooks->Input;
+    if (input && g_mapKeyName[0])
+        input->UnregisterKeybindByName(g_mapKeyName, EModKeyEvent::Pressed, &OnMapKey);
+
+    GetSelf()->hooks->Engine->UnregisterOnTick(OnMapTick);
+
+    g_pendingMapPress.store(false, std::memory_order_relaxed);
+    g_menuWasOpen.store(false, std::memory_order_relaxed);
 }
