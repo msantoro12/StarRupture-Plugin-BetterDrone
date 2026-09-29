@@ -958,13 +958,9 @@ void RenderDronePanel(IModLoaderImGui* ui)
     DroneConfig::Config::ReadSpeedUnit(currentUnit, sizeof(currentUnit));
     const int unitIdx = SelectUnitIndex(currentUnit);
 
-    const char* unitLabel = "Speed Display Unit:";
-    float unitLabelW = 0.0f, unitLabelH = 0.0f;
-    ui->CalcTextSize(unitLabel, &unitLabelW, &unitLabelH, false, -1.0f);
-
     ui->AlignTextToFramePadding();
-    ui->Text(unitLabel);
-    ui->SameLine(unitLabelW + ui->GetFrameHeight() * 0.5f, -1.0f);
+    ui->Text("Speed Display Unit:");
+    ui->SameLine(0.0f, -1.0f);
     if (ui->RadioButton("km/h (Metric)##unit_kmh", unitIdx == kUnitKmh))
         DroneConfig::Config::WriteSpeedUnit("km/h");
     ui->SameLine(0.0f, 10.0f);
