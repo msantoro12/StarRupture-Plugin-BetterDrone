@@ -59,7 +59,7 @@ namespace
     //
     // The callback's thread isn't guaranteed, so it only raises a flag;
     // RenderDronePanel does the actual close from the render thread. The
-    // owner runs BetterCheats and BetterDrone panels open together on F10,
+    // BetterCheats and BetterDrone panels are often open together on F10,
     // and only one can hold ImGui focus at a time -- gating the close on
     // focus (as this once did) silently dropped the request for whichever
     // panel didn't have it. Closing whenever the panel is open, regardless
@@ -615,7 +615,7 @@ static void ApplyRangePreset(const RangePreset& preset)
 }
 
 // ---------------------------------------------------------------------------
-// Saved presets (PresetStore-backed) -- the owner's own tweaks, named and
+// Saved presets (PresetStore-backed) -- the player's own tweaks, named and
 // kept apart from the built-in arrays above. Per group: a live-fields
 // getter (for Save), an apply function (for picking one from the dropdown),
 // a built-in-name check (so a saved preset can never collide with, rename
@@ -742,7 +742,7 @@ using ComputeSuggestFn = void (*)(char* out, int cap);
 // A dropdown of the group's saved presets plus Save/Rename/Delete, in
 // addition to (not replacing) the built-in preset buttons above it. Save
 // never prompts -- it computes the suggested name itself and selects the
-// result, so it stays one click, per the owner's ask.
+// result, so it stays one click.
 static void RenderSavedPresetsRow(IModLoaderImGui* ui, const char* idScope, const char* group,
                             PresetStore::Field* fields, int fieldCount,
                             GetLiveFieldsFn getLive, ApplyFieldsFn apply,
