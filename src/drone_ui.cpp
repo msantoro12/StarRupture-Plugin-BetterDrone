@@ -175,6 +175,8 @@ namespace
         imgui->TableNextRow(0, 0.0f);
 
         imgui->TableSetColumnIndex(0);
+        // Drop the text to the frame-height widgets' baseline in this row.
+        imgui->AlignTextToFramePadding();
         if (active) imgui->Text(label);
         else        imgui->TextDisabled(label);
         if (tooltip && imgui->IsItemHovered())
@@ -960,6 +962,7 @@ void RenderDronePanel(IModLoaderImGui* ui)
     float unitLabelW = 0.0f, unitLabelH = 0.0f;
     ui->CalcTextSize(unitLabel, &unitLabelW, &unitLabelH, false, -1.0f);
 
+    ui->AlignTextToFramePadding();
     ui->Text(unitLabel);
     ui->SameLine(unitLabelW + ui->GetFrameHeight() * 0.5f, -1.0f);
     if (ui->RadioButton("km/h (Metric)##unit_kmh", unitIdx == kUnitKmh))
