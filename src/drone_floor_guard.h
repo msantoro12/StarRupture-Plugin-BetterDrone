@@ -15,11 +15,16 @@
 // return, it is held at that spot until the floor is there again, then set
 // down walking. Nothing is touched when the floor is fine.
 //
+// A floor that is really gone (deconstructed, destroyed, moved) must not be
+// held for: the guard does not arm at the stock drone range, leaves a fall
+// that happens with the drone within stock range to the game, and lets go
+// when the player moves or jumps, or after a bounded wait.
+//
 // The hold re-places the character every tick rather than switching its
 // movement off, so if the plugin is unloaded mid-hold nothing is left frozen.
 
 // Game thread only. Call once per engine tick.
-void TickDroneFloorGuard();
+void TickDroneFloorGuard(float deltaSeconds);
 
 // Forgets the parked character. Call when the world ends.
 void ResetDroneFloorGuard();

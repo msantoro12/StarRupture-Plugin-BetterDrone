@@ -58,7 +58,7 @@ static void OnEngineInit()
 static void OnEngineTick(float deltaSeconds)
 {
     OnDroneTick(deltaSeconds);
-    TickDroneFloorGuard();
+    TickDroneFloorGuard(deltaSeconds);
     DroneAudio::Tick(deltaSeconds);
     TickDroneMenuClose();
 }
