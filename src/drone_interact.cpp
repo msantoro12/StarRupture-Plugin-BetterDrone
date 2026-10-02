@@ -504,14 +504,104 @@ namespace
     {
         g_pendingMapPress.store(true, std::memory_order_relaxed);
     }
+
+    // UCrMapManuSubsystem::UncoverFogOfWar(PlayerController, Location, Radius).
+    // Public but not a UFunction. It reveals the map around Location for the
+    // player character the controller is possessing: it gives up unless that
+    // pawn is an ACrCharacterPlayerBase, clears the character's
+    // UCrPlayerMapMenuDataComponent fog cells within Radius, and redraws the
+    // map texture only when that character is locally controlled. The
+    // subsystem's own tick calls it from RecordPlayerLocation with the body's
+    // position. The location arrives by pointer, as the x64 ABI passes a
+    // 12-byte struct, and only its X and Y are read.
+    typedef void (__fastcall* UncoverFogOfWar_t)(void* subsystem, const void* pc,
+                                                 const SDK::FVector3f* location, float radius);
+
+    // Resolved during OnPluginLoadHooks; 0 means the pattern missed on this build.
+    uintptr_t g_addrUncoverFog = 0;
+
+    constexpr const char* kUncoverFogPattern =
+        "48 89 5C 24 ?? 48 89 6C 24 ?? 56 48 83 EC ?? F2 41 0F 10 00 48 8B F2 "
+        "0F 29 74 24 ?? 48 8B E9 F2 0F 11 44 24 ?? 0F 28 F3 E8";
+
+    // Cached so the tick never reads the INI. Written from the loader's
+    // config-changed callback, read on the game thread.
+    std::atomic<bool> g_fogEnabled{ false };
+
+    // Where the drone last uncovered the map. Plain values, so nothing here
+    // outlives a world; cleared whenever the drone is not out.
+    bool              g_hasLastReveal = false;
+    SDK::FVector3f    g_lastReveal    = {};
+
+    // Mirrors RecordPlayerLocation for the drone: uncover once on the first
+    // tick in the drone, then again each time the drone has moved more than
+    // MinFootstepDistance from the last spot, with the walking radius
+    // (FogOfWarPlayerUncoverRadius scaled by the FogOfWarRadiusMultiplier gem
+    // attribute). Everything is looked up fresh each tick.
+    void OnFogTick(float)
+    {
+        if (!g_fogEnabled.load(std::memory_order_relaxed))
+        {
+            g_hasLastReveal = false;
+            return;
+        }
+
+        SDK::ACrPlayerControllerBase* pc        = LocalController();
+        SDK::ACrCharacterPlayerBase*  character = pc ? pc->CrChar : nullptr;
+        if (!character || character->Status != SDK::EPlayerCharacterStatus::BuildingDrone || character->bDead)
+        {
+            g_hasLastReveal = false;
+            return;
+        }
+
+        // UncoverFogOfWar reveals for the possessed pawn, which stays the
+        // character while the drone is out.
+        SDK::ACrCharacterDroneBase* drone = character->BuildingDrone;
+        if (pc->Pawn != static_cast<SDK::APawn*>(character) || !drone)
+            return;
+
+        SDK::UCrMapMenuDevSettings* settings = SDK::UCrMapMenuDevSettings::GetDefaultObj();
+        if (!settings)
+            return;
+
+        const SDK::FVector    location = drone->K2_GetActorLocation();
+        const SDK::FVector3f  here     = { static_cast<float>(location.X),
+                                           static_cast<float>(location.Y),
+                                           static_cast<float>(location.Z) };
+
+        if (g_hasLastReveal)
+        {
+            const float dx = here.X - g_lastReveal.X;
+            const float dy = here.Y - g_lastReveal.Y;
+            const float dz = here.Z - g_lastReveal.Z;
+            const float minDistance = settings->MinFootstepDistance;
+            if (dx * dx + dy * dy + dz * dz <= minDistance * minDistance)
+                return;
+        }
+
+        auto* subsystem = SDK::USubsystemBlueprintLibrary::GetWorldSubsystem(
+            pc, SDK::UCrMapManuSubsystem::StaticClass());
+        if (!subsystem)
+            return;
+
+        float radius = settings->FogOfWarPlayerUncoverRadius;
+        if (SDK::UCrGemAttributeSet* gems = character->GemAttributes)
+            radius *= gems->FogOfWarRadiusMultiplier.CurrentValue;
+
+        reinterpret_cast<UncoverFogOfWar_t>(g_addrUncoverFog)(subsystem, pc, &here, radius);
+
+        g_lastReveal    = here;
+        g_hasLastReveal = true;
+    }
 }
 
 // Every address this file resolves is a function entry, so each request
 // declares PLUGIN_SCAN_FUNCTION_START: three get a detour written over them,
-// and NativeOnInputInteract and the map handler are called directly. The
-// loader then checks the match against the executable's exception directory
-// instead of trusting that the bytes lined up -- a pattern that drifted into
-// the middle of some other function is refused rather than used.
+// and NativeOnInputInteract, the map handler and UncoverFogOfWar are called
+// directly. The loader then checks the match against the executable's
+// exception directory instead of trusting that the bytes lined up -- a
+// pattern that drifted into the middle of some other function is refused
+// rather than used.
 static uintptr_t ResolveFunction(IPluginSelf* self, IPluginHookScanner* scanner,
                                  const char* hookName, const char* pattern)
 {
@@ -644,4 +734,41 @@ void ShutdownDroneMap()
 
     g_pendingMapPress.store(false, std::memory_order_relaxed);
     g_menuWasOpen.store(false, std::memory_order_relaxed);
+}
+
+void ResolveDroneFog(IPluginSelf* self, IPluginHookScanner* scanner)
+{
+    if (!self || !scanner)
+        return;
+
+    g_addrUncoverFog = ResolveFunction(self, scanner,
+        "UCrMapManuSubsystem::UncoverFogOfWar", kUncoverFogPattern);
+}
+
+bool InitDroneFog()
+{
+    if (!g_addrUncoverFog)
+    {
+        LOG_WARN("DroneFog: UncoverFogOfWar unresolved -- the drone will not uncover the map");
+        return false;
+    }
+
+    g_hasLastReveal = false;
+    SetDroneFogEnabled(DroneConfig::Config::ReadDroneRevealsMap());
+    GetSelf()->hooks->Engine->RegisterOnTick(OnFogTick);
+
+    LOG_INFO("DroneFog: UncoverFogOfWar at 0x%llX", g_addrUncoverFog);
+    return true;
+}
+
+void SetDroneFogEnabled(bool enabled)
+{
+    g_fogEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+void ShutdownDroneFog()
+{
+    GetSelf()->hooks->Engine->UnregisterOnTick(OnFogTick);
+
+    g_fogEnabled.store(false, std::memory_order_relaxed);
 }

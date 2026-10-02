@@ -33,6 +33,12 @@
 // UCrInputNativeMapMenu, belongs to the unbound on-foot config, and the
 // controller function behind it has no drone check of its own.
 // InitDroneMap supplies that key from the keybind dispatch as well.
+//
+// Flying the drone does not uncover the map either. UCrMapManuSubsystem
+// uncovers it around the player's body, sampled from the character's
+// movement component, and the body stays where it was left while the drone
+// is out. InitDroneFog feeds the drone's position to the same function, at
+// the same spacing, when "Drone Reveals Map" is on.
 
 struct IPluginSelf;
 struct IPluginHookScanner;
@@ -51,6 +57,17 @@ void ResolveDroneMap(IPluginSelf* self, IPluginHookScanner* scanner);
 bool InitDroneMap();
 
 void ShutdownDroneMap();
+
+// Same contract as ResolveDroneInteract, for the map-reveal path.
+void ResolveDroneFog(IPluginSelf* self, IPluginHookScanner* scanner);
+
+bool InitDroneFog();
+
+void ShutdownDroneFog();
+
+// "Drone Reveals Map" as the loader just reported it. The tick reads a
+// cached copy, never the INI.
+void SetDroneFogEnabled(bool enabled);
 
 // Game thread only.
 bool IsLocalPlayerInDrone();
