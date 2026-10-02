@@ -3,6 +3,7 @@
 #include "drone_interact.h"
 #include "drone_wave_patch.h"
 #include "drone_audio.h"
+#include "drone_floor_guard.h"
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
 #include <windows.h>
@@ -57,6 +58,7 @@ static void OnEngineInit()
 static void OnEngineTick(float deltaSeconds)
 {
     OnDroneTick(deltaSeconds);
+    TickDroneFloorGuard();
     DroneAudio::Tick(deltaSeconds);
     TickDroneMenuClose();
 }

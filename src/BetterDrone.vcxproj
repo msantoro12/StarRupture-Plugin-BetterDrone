@@ -99,6 +99,7 @@
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="drone_audio.cpp" />
     <ClCompile Include="drone_config.cpp" />
+    <ClCompile Include="drone_floor_guard.cpp" />
     <ClCompile Include="drone_interact.cpp" />
     <ClCompile Include="drone_key_vk.cpp" />
     <ClCompile Include="preset_store.cpp" />
@@ -117,6 +118,7 @@
   <ItemGroup>
     <ClInclude Include="drone_audio.h" />
     <ClInclude Include="drone_config.h" />
+    <ClInclude Include="drone_floor_guard.h" />
     <ClInclude Include="drone_interact.h" />
     <ClInclude Include="drone_key_vk.h" />
     <ClInclude Include="preset_store.h" />

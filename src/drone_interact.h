@@ -37,6 +37,8 @@
 struct IPluginSelf;
 struct IPluginHookScanner;
 
+namespace SDK { class ACrCharacterPlayerBase; }
+
 // Resolve every AOB the interact path needs. Callable only from
 // OnPluginLoadHooks — the loader refuses scans made anywhere else.
 void ResolveDroneInteract(IPluginSelf* self, IPluginHookScanner* scanner);
@@ -51,6 +53,10 @@ void ResolveDroneMap(IPluginSelf* self, IPluginHookScanner* scanner);
 bool InitDroneMap();
 
 void ShutdownDroneMap();
+
+// Game thread only. The local player's character, or nullptr outside a game.
+// It stays the possessed pawn while the drone is out.
+SDK::ACrCharacterPlayerBase* LocalPlayerCharacter();
 
 // Game thread only.
 bool IsLocalPlayerInDrone();
