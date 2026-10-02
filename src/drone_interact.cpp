@@ -7,6 +7,7 @@
 #include <CommonGame_classes.hpp>
 #include <EnhancedInput_structs.hpp>
 #include <Engine_classes.hpp>
+#include <GameplayAbilities_classes.hpp>
 #include <atomic>
 #include <windows.h>
 
@@ -90,13 +91,20 @@ namespace
         LOG_DEBUG("DroneInteract: interact key seen but nothing sent -- %s", reason);
     }
 
-    SDK::ACrCharacterPlayerBase* DroneCharacter(SDK::ACrPlayerControllerBase* pc)
+    // The controller's character while it is flying the drone, else null.
+    SDK::ACrCharacterPlayerBase* PilotingCharacter(SDK::ACrPlayerControllerBase* pc)
     {
-        if (!pc)
+        SDK::ACrCharacterPlayerBase* character = pc ? pc->CrChar : nullptr;
+        if (!character || character->Status != SDK::EPlayerCharacterStatus::BuildingDrone)
             return nullptr;
 
-        SDK::ACrCharacterPlayerBase* character = pc->CrChar;
-        if (!character || character->Status != SDK::EPlayerCharacterStatus::BuildingDrone)
+        return character;
+    }
+
+    SDK::ACrCharacterPlayerBase* DroneCharacter(SDK::ACrPlayerControllerBase* pc)
+    {
+        SDK::ACrCharacterPlayerBase* character = PilotingCharacter(pc);
+        if (!character)
             return nullptr;
 
         // Checked last: this runs from a targeting tick, and the pointer reads
@@ -460,11 +468,10 @@ namespace
         if (!press && !g_menuWasOpen.load(std::memory_order_relaxed))
             return;
 
-        SDK::ACrPlayerControllerBase* pc        = LocalController();
-        SDK::ACrCharacterPlayerBase*  character = pc ? pc->CrChar : nullptr;
+        SDK::ACrPlayerControllerBase* pc = LocalController();
 
         // On foot the game opens the map itself, so this stays out of it.
-        const bool inDrone = character && character->Status == SDK::EPlayerCharacterStatus::BuildingDrone;
+        const bool inDrone = PilotingCharacter(pc) != nullptr;
 
         // The map handler never checks what is already on screen, so it
         // would push the map on top of any other menu. A widget stays on
@@ -520,9 +527,35 @@ namespace
     // Resolved during OnPluginLoadHooks; 0 means the pattern missed on this build.
     uintptr_t g_addrUncoverFog = 0;
 
+    // Runs on through the first single-precision subtractions on the location
+    // (subss), so a build that switched the parameter to a double FVector
+    // misses here instead of being called with the wrong layout.
     constexpr const char* kUncoverFogPattern =
         "48 89 5C 24 ?? 48 89 6C 24 ?? 56 48 83 EC ?? F2 41 0F 10 00 48 8B F2 "
-        "0F 29 74 24 ?? 48 8B E9 F2 0F 11 44 24 ?? 0F 28 F3 E8";
+        "0F 29 74 24 ?? 48 8B E9 F2 0F 11 44 24 ?? 0F 28 F3 E8 ?? ?? ?? ?? "
+        "48 8B D8 48 83 B8 ?? ?? ?? ?? 00 75 ?? 48 8B C8 E8 ?? ?? ?? ?? "
+        "48 8B 83 ?? ?? ?? ?? 48 89 7C 24 ?? 48 85 C0 75 ?? 48 8B 3D ?? ?? ?? ?? "
+        "EB ?? 66 0F 6E 50 ?? F3 0F 10 44 24 ?? F3 0F 10 4C 24 ?? "
+        "F3 0F 5C 40 ?? F3 0F 5C 48";
+
+    // Status.InForgottenEngine, the tag the game's own footstep reveal checks
+    // (IsPlayerInForgottenEngine) before uncovering anything. Built on the
+    // game thread the first time it is needed; an FName stays valid.
+    SDK::FGameplayTag g_forgottenEngineTag = {};
+
+    // True only when the character's ability system can be read and does not
+    // carry the tag. Anything unreadable counts as inside, so nothing is
+    // revealed that the game would not reveal on foot.
+    bool OutsideForgottenEngine(SDK::ACrCharacterPlayerBase* character)
+    {
+        if (g_forgottenEngineTag.TagName.IsNone())
+            g_forgottenEngineTag.TagName = SDK::BasicFilesImplUtils::StringToName(L"Status.InForgottenEngine");
+        if (g_forgottenEngineTag.TagName.IsNone())
+            return false;
+
+        SDK::UAbilitySystemComponent* asc = SDK::UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(character);
+        return asc && asc->GetGameplayTagCount(g_forgottenEngineTag) == 0;
+    }
 
     // Cached so the tick never reads the INI. Written from the loader's
     // config-changed callback, read on the game thread.
@@ -537,7 +570,8 @@ namespace
     // tick in the drone, then again each time the drone has moved more than
     // MinFootstepDistance from the last spot, with the walking radius
     // (FogOfWarPlayerUncoverRadius scaled by the FogOfWarRadiusMultiplier gem
-    // attribute). Everything is looked up fresh each tick.
+    // attribute), and never inside the Forgotten Engine, which the footstep
+    // reveal skips too. Everything is looked up fresh each tick.
     void OnFogTick(float)
     {
         if (!g_fogEnabled.load(std::memory_order_relaxed))
@@ -547,8 +581,8 @@ namespace
         }
 
         SDK::ACrPlayerControllerBase* pc        = LocalController();
-        SDK::ACrCharacterPlayerBase*  character = pc ? pc->CrChar : nullptr;
-        if (!character || character->Status != SDK::EPlayerCharacterStatus::BuildingDrone || character->bDead)
+        SDK::ACrCharacterPlayerBase*  character = PilotingCharacter(pc);
+        if (!character || character->bDead)
         {
             g_hasLastReveal = false;
             return;
@@ -577,6 +611,16 @@ namespace
             const float minDistance = settings->MinFootstepDistance;
             if (dx * dx + dy * dy + dz * dz <= minDistance * minDistance)
                 return;
+        }
+
+        // Checked only once the drone has moved far enough to reveal, so it
+        // costs nothing on the other ticks. The spot still counts as visited,
+        // so inside the zone the check runs once per step, not every tick.
+        if (!OutsideForgottenEngine(character))
+        {
+            g_lastReveal    = here;
+            g_hasLastReveal = true;
+            return;
         }
 
         auto* subsystem = SDK::USubsystemBlueprintLibrary::GetWorldSubsystem(
@@ -661,9 +705,7 @@ bool IsLocalPlayerInDrone()
 {
     try
     {
-        SDK::ACrPlayerControllerBase* pc = LocalController();
-        SDK::ACrCharacterPlayerBase* character = pc ? pc->CrChar : nullptr;
-        return character && character->Status == SDK::EPlayerCharacterStatus::BuildingDrone;
+        return PilotingCharacter(LocalController()) != nullptr;
     }
     catch (...)
     {
@@ -749,7 +791,7 @@ bool InitDroneFog()
 {
     if (!g_addrUncoverFog)
     {
-        LOG_WARN("DroneFog: UncoverFogOfWar unresolved -- the drone will not uncover the map");
+        LOG_WARN("DroneFog: UncoverFogOfWar unresolved — the drone will not uncover the map");
         return false;
     }
 
