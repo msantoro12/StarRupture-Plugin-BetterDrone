@@ -563,8 +563,8 @@ namespace
 
     // Where the drone last uncovered the map. Plain values, so nothing here
     // outlives a world; cleared whenever the drone is not out.
-    bool              g_hasLastReveal = false;
-    SDK::FVector3f    g_lastReveal    = {};
+    bool         g_hasLastReveal = false;
+    SDK::FVector g_lastReveal    = {};
 
     // Mirrors RecordPlayerLocation for the drone: uncover once on the first
     // tick in the drone, then again each time the drone has moved more than
@@ -598,20 +598,9 @@ namespace
         if (!settings)
             return;
 
-        const SDK::FVector    location = drone->K2_GetActorLocation();
-        const SDK::FVector3f  here     = { static_cast<float>(location.X),
-                                           static_cast<float>(location.Y),
-                                           static_cast<float>(location.Z) };
-
-        if (g_hasLastReveal)
-        {
-            const float dx = here.X - g_lastReveal.X;
-            const float dy = here.Y - g_lastReveal.Y;
-            const float dz = here.Z - g_lastReveal.Z;
-            const float minDistance = settings->MinFootstepDistance;
-            if (dx * dx + dy * dy + dz * dz <= minDistance * minDistance)
-                return;
-        }
+        const SDK::FVector here = drone->K2_GetActorLocation();
+        if (g_hasLastReveal && here.GetDistanceTo(g_lastReveal) <= settings->MinFootstepDistance)
+            return;
 
         // Checked only once the drone has moved far enough to reveal, so it
         // costs nothing on the other ticks. The spot still counts as visited,
@@ -632,7 +621,10 @@ namespace
         if (SDK::UCrGemAttributeSet* gems = character->GemAttributes)
             radius *= gems->FogOfWarRadiusMultiplier.CurrentValue;
 
-        reinterpret_cast<UncoverFogOfWar_t>(g_addrUncoverFog)(subsystem, pc, &here, radius);
+        const SDK::FVector3f location = { static_cast<float>(here.X),
+                                          static_cast<float>(here.Y),
+                                          static_cast<float>(here.Z) };
+        reinterpret_cast<UncoverFogOfWar_t>(g_addrUncoverFog)(subsystem, pc, &location, radius);
 
         g_lastReveal    = here;
         g_hasLastReveal = true;
