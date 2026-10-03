@@ -567,12 +567,17 @@ bool InitDroneInteract()
     return true;
 }
 
+SDK::ACrCharacterPlayerBase* LocalPlayerCharacter()
+{
+    SDK::ACrPlayerControllerBase* pc = LocalController();
+    return pc ? pc->CrChar : nullptr;
+}
+
 bool IsLocalPlayerInDrone()
 {
     try
     {
-        SDK::ACrPlayerControllerBase* pc = LocalController();
-        SDK::ACrCharacterPlayerBase* character = pc ? pc->CrChar : nullptr;
+        SDK::ACrCharacterPlayerBase* character = LocalPlayerCharacter();
         return character && character->Status == SDK::EPlayerCharacterStatus::BuildingDrone;
     }
     catch (...)

@@ -1,6 +1,7 @@
 #include "drone_settings.h"
 #include "drone_config.h"
 #include "drone_audio.h"
+#include "drone_floor_guard.h"
 #include "drone_interact.h"
 #include "drone_sprint_key.h"
 #include "drone_key_vk.h"
@@ -166,6 +167,7 @@ namespace
     void OnWorldEndPlay(SDK::UWorld*, const char* worldName)
     {
         DroneAudio::OnWorldEnd();
+        ResetDroneFloorGuard();
 
         if (worldName && std::strcmp(worldName, "ChimeraMain") == 0)
             g_inGameSession = false;
