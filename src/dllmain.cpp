@@ -65,7 +65,9 @@ static void OnEngineTick(float deltaSeconds)
 
 // Fires only from the loader's own settings window, for the entries
 // registered in DroneConfig::Config::Initialize. Keybind rebinds and the
-// boolean entries are picked up live wherever they're consulted.
+// boolean entries are picked up live wherever they're consulted, except
+// Drone Reveals Map, which the tick reads from a cache set here. This fires
+// before the loader writes the INI, so the cache takes newValue.
 static void OnConfigChanged(const char* section, const char* key, const char* newValue)
 {
     if (!section || !key)
@@ -80,6 +82,9 @@ static void OnConfigChanged(const char* section, const char* key, const char* ne
         LOG_DEBUG("OnConfigChanged: Boost Key rebound to '%s'", newValue ? newValue : "");
         return;
     }
+
+    if (strcmp(section, "Interaction") == 0 && strcmp(key, "Drone Reveals Map") == 0)
+        SetDroneFogEnabled(newValue && (strcmp(newValue, "1") == 0 || _stricmp(newValue, "true") == 0));
 
     LOG_DEBUG("OnConfigChanged: [%s] %s updated", section, key);
 }
@@ -102,6 +107,7 @@ extern "C" __declspec(dllexport) void OnPluginLoadHooks(IPluginSelf* self, IPlug
     ResolveWavePatch(self, scanner);
     ResolveDroneInteract(self, scanner);
     ResolveDroneMap(self, scanner);
+    ResolveDroneFog(self, scanner);
 }
 
 extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
@@ -122,6 +128,7 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     InitWavePatch();
     InitDroneInteract();
     InitDroneMap();
+    InitDroneFog();
     RegisterBoostKey(self);
 
     if (self->hooks->UI)
@@ -140,6 +147,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     UnregisterBoostKey(g_self);
     ShutdownDroneInteract();
     ShutdownDroneMap();
+    ShutdownDroneFog();
     ShutdownWavePatch();
     DroneAudio::Shutdown();
     ShutdownDroneUI(g_self);
