@@ -29,6 +29,15 @@ namespace
     // floor would be loaded if it still existed.
     constexpr float k_holdTimeoutSeconds = 10.0f;
 
+    // How long after return the character is still watched while it stands on
+    // its floor. The world streams back in around the view over a few
+    // seconds, and the floor's collision can drop out during that time.
+    constexpr float k_returnSettleSeconds = 3.0f;
+
+    // Input this soon after return is left over from flying the drone, not
+    // the player taking the character back.
+    constexpr float k_returnInputGraceSeconds = 0.5f;
+
     // The stock drone range, used when the game's own values were not read.
     constexpr float k_stockRadiusCm = 5000.0f;
     constexpr float k_stockHeightCm = 2000.0f;
@@ -42,6 +51,15 @@ namespace
 
     Phase  g_phase = Phase::Idle;
     bool   g_wasInDrone = false;
+
+    // The character's state on the last tick before the drone went out. The
+    // game switches the parked character's movement off (MOVE_None) as the
+    // drone launches, which also clears its floor, so both are read the tick
+    // before.
+    bool   g_wasStanding = false;
+    SDK::EMovementMode g_lastMode = SDK::EMovementMode::MOVE_None;
+    float  g_lastFloorDistCm = 0.0f;
+
     ObjectRef<SDK::ACrCharacterPlayerBase> g_parked;
     SDK::FVector g_parkedLocation;
     float  g_parkedFloorDistCm = 0.0f;
@@ -49,6 +67,7 @@ namespace
     // True once the character has been caught falling, until it is set down.
     bool   g_holding = false;
     float  g_holdSeconds = 0.0f;
+    float  g_returnSeconds = 0.0f;
     bool   g_leftStockRange = false;
     double g_maxDroneDistanceCm = 0.0;
     double g_largestDropCm = 0.0;
@@ -82,7 +101,9 @@ namespace
         if (!HasParkedFloor(move, g_parkedLocation))
             return false;
 
-        if (move->MovementMode != SDK::EMovementMode::MOVE_Walking)
+        // Only undo a fall. While the drone is out the game keeps movement
+        // off, and that is left alone.
+        if (move->MovementMode == SDK::EMovementMode::MOVE_Falling)
             move->SetMovementMode(SDK::EMovementMode::MOVE_Walking, 0);
 
         g_holding = false;
@@ -95,11 +116,24 @@ namespace
         g_phase = Phase::Idle;
     }
 
-    void Park(SDK::ACrCharacterPlayerBase* character, SDK::UCharacterMovementComponent* move)
+    // Remembers whether the character is standing on walkable floor. Reads
+    // what the movement component already worked out this tick; no trace.
+    void NoteStanding(SDK::UCharacterMovementComponent* move)
+    {
+        const SDK::FFindFloorResult& floor = move->CurrentFloor;
+        g_lastMode = move->MovementMode;
+        g_wasStanding = (g_lastMode == SDK::EMovementMode::MOVE_Walking ||
+                         g_lastMode == SDK::EMovementMode::MOVE_NavWalking) &&
+                        floor.bBlockingHit && floor.bWalkableFloor;
+        g_lastFloorDistCm = floor.FloorDist;
+    }
+
+    void Park(SDK::ACrCharacterPlayerBase* character)
     {
         g_phase    = Phase::Idle;
         g_holding  = false;
         g_holdSeconds        = 0.0f;
+        g_returnSeconds      = 0.0f;
         g_leftStockRange     = false;
         g_maxDroneDistanceCm = 0.0;
         g_largestDropCm      = 0.0;
@@ -113,28 +147,21 @@ namespace
             return;
         }
 
-        // Only a character standing on a floor is guarded. Swimming, ladders,
-        // ziplines and the like keep the stock behaviour.
-        if (move->MovementMode != SDK::EMovementMode::MOVE_Walking &&
-            move->MovementMode != SDK::EMovementMode::MOVE_NavWalking)
+        // Only a character that was standing on a floor is guarded. Swimming,
+        // ladders, ziplines and the like keep the stock behaviour.
+        if (!g_wasStanding)
         {
-            LOG_INFO("DroneFloorGuard: not guarding this flight, the character is not walking (movement mode %d)",
-                static_cast<int>(move->MovementMode));
-            return;
-        }
-
-        const SDK::FVector location = character->K2_GetActorLocation();
-        const float floorDist = WalkableFloorDistCm(move, location);
-        if (floorDist < 0.0f)
-        {
-            LOG_INFO("DroneFloorGuard: not guarding this flight, no walkable floor under the character");
+            LOG_INFO("DroneFloorGuard: not guarding this flight, the character was not standing on a floor (movement mode %d)",
+                static_cast<int>(g_lastMode));
             return;
         }
 
         g_parked.Set(character);
-        g_parkedLocation    = location;
-        g_parkedFloorDistCm = floorDist;
+        g_parkedLocation    = character->K2_GetActorLocation();
+        g_parkedFloorDistCm = g_lastFloorDistCm;
         g_phase = Phase::Flying;
+        LOG_INFO("DroneFloorGuard: guarding this flight, the character is parked %.1f cm above its floor",
+            g_parkedFloorDistCm);
     }
 
     double DropBelowParked(SDK::ACrCharacterPlayerBase* character)
@@ -206,25 +233,32 @@ namespace
 
     void TickReturning(SDK::ACrCharacterPlayerBase* character, SDK::UCharacterMovementComponent* move, float deltaSeconds)
     {
+        // The drone never left the stock range, so the floor never unloaded.
+        if (!g_leftStockRange)
+        {
+            g_phase = Phase::Idle;
+            return;
+        }
+
+        g_returnSeconds += deltaSeconds;
+        const bool playerMoved = g_returnSeconds > k_returnInputGraceSeconds &&
+            (!character->GetLastMovementInputVector().IsZero() || character->bPressedJump);
+
         if (!g_holding)
         {
-            // The drone never left the stock range, so the floor never unloaded.
-            if (!g_leftStockRange)
-            {
-                g_phase = Phase::Idle;
-                return;
-            }
-
-            // The usual case: still standing where it was left. Nothing to do.
+            // The usual case: still standing where it was left. Keep watching
+            // until the world around it has streamed back in, or the player
+            // walks off.
             if (DropBelowParked(character) < k_returnDropCm &&
                 HasParkedFloor(move, character->K2_GetActorLocation()))
             {
-                g_phase = Phase::Idle;
+                if (playerMoved || g_returnSeconds > k_returnSettleSeconds)
+                    g_phase = Phase::Idle;
                 return;
             }
         }
         // The player is back in control: moving or jumping ends the hold.
-        else if (!character->GetLastMovementInputVector().IsZero() || character->bPressedJump)
+        else if (playerMoved)
         {
             LOG_INFO("DroneFloorGuard: player moved %.1f s into the return hold; released the character",
                 g_holdSeconds);
@@ -237,7 +271,8 @@ namespace
             LOG_INFO("DroneFloorGuard: drone back from %.0f m with the character off its floor (dropped %.0f cm); "
                      "held it %.1f s, then set it back down",
                 g_maxDroneDistanceCm / 100.0, g_largestDropCm, g_holdSeconds);
-            g_phase = Phase::Idle;
+            // Stays in Returning, so the floor is still watched while the
+            // world finishes streaming back in.
             return;
         }
 
@@ -272,7 +307,9 @@ void TickDroneFloorGuard(float deltaSeconds)
     {
     case Phase::Idle:
         if (inDrone && !g_wasInDrone)
-            Park(character, move);
+            Park(character);
+        else if (!inDrone)
+            NoteStanding(move);
         break;
 
     case Phase::Flying:
@@ -283,6 +320,7 @@ void TickDroneFloorGuard(float deltaSeconds)
         }
         g_phase = Phase::Returning;
         g_holdSeconds = 0.0f;
+        g_returnSeconds = 0.0f;
         TickReturning(character, move, deltaSeconds);
         break;
 
@@ -306,7 +344,8 @@ void TickDroneFloorGuard(float deltaSeconds)
 void ResetDroneFloorGuard()
 {
     g_phase      = Phase::Idle;
-    g_wasInDrone = false;
-    g_holding    = false;
+    g_wasInDrone  = false;
+    g_wasStanding = false;
+    g_holding     = false;
     g_parked.Reset();
 }

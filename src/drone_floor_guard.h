@@ -11,9 +11,10 @@
 // floor is back, and it drops through.
 //
 // The guard records where the character stood when the drone went out. If the
-// character drops while the drone is away, or has no floor under it on
-// return, it is held at that spot until the floor is there again, then set
-// down walking. Nothing is touched when the floor is fine.
+// character drops while the drone is away, or loses its floor in the first
+// seconds after return while the world streams back in, it is held at that
+// spot until the floor is there again, then set down walking. Nothing is
+// touched when the floor is fine.
 //
 // A floor that is really gone (deconstructed, destroyed, moved) must not be
 // held for: the guard does not arm at the stock drone range, leaves a fall
