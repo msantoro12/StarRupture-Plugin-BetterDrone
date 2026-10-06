@@ -77,3 +77,7 @@ SDK::ACrCharacterPlayerBase* LocalPlayerCharacter();
 
 // Game thread only.
 bool IsLocalPlayerInDrone();
+
+// Game thread only. True while anything is on the game's menu layer: the map,
+// the inventory, a building window, the pause menu.
+bool IsGameMenuOpen();

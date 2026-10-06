@@ -711,6 +711,20 @@ bool IsLocalPlayerInDrone()
     }
 }
 
+bool IsGameMenuOpen()
+{
+    try
+    {
+        SDK::ACrPlayerControllerBase* pc = LocalController();
+        SDK::UCommonActivatableWidgetContainerBase* layer = pc ? FindMenuLayer(pc) : nullptr;
+        return layer && layer->WidgetList.Num() > 0;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
 void ShutdownDroneInteract()
 {
     auto* input = GetSelf()->hooks->Input;

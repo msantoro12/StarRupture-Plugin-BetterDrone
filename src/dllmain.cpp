@@ -62,6 +62,7 @@ static void OnEngineTick(float deltaSeconds)
     DroneAudio::Tick(deltaSeconds);
     TickDroneMenuClose();
     TickDroneMenuOpen();
+    TickDronePresetKeys();
 }
 
 // Fires only from the loader's own settings window, for the entries
@@ -121,6 +122,7 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     DroneAudio::Initialize();
     InitGameSessionTracking(self);
     InitDroneUI(self);
+    InitDronePresetKeys(self);
 
     self->hooks->Engine->RegisterOnInit(OnEngineInit);
     self->hooks->Engine->RegisterOnShutdown(OnEngineShutdown);
@@ -151,6 +153,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     ShutdownDroneFog();
     ShutdownWavePatch();
     DroneAudio::Shutdown();
+    ShutdownDronePresetKeys(g_self);
     ShutdownDroneUI(g_self);
     ShutdownGameSessionTracking(g_self);
     RestoreCDODefaults();
