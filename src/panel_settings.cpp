@@ -40,13 +40,6 @@ namespace PanelSettings
         Config::PersistPanel(id);
     }
 
-    float Write(PanelFloat id, float value)
-    {
-        const float applied = SetLive(id, value);
-        Commit(id);
-        return applied;
-    }
-
     float MasterVolume()
     {
         float vols[DroneAudio::kVolCount];
@@ -120,10 +113,7 @@ namespace PanelSettings
     {
         if (!g_drone.valid) return;
 
-        Config::WritePanel(PanelFloat::SpeedPerSec, preset.speedPerSec);
-        Config::WritePanel(PanelFloat::BoostMultiplier, preset.boostMultiplier);
-        Config::WritePanel(PanelFloat::Acceleration, preset.acceleration);
-        Config::WritePanel(PanelFloat::Deceleration, preset.deceleration);
+        ApplySpeed(preset.speedPerSec, preset.boostMultiplier, preset.acceleration, preset.deceleration);
     }
 
     void ApplyRangePreset(const RangePreset& preset)
@@ -131,6 +121,14 @@ namespace PanelSettings
         if (!g_drone.valid) return;
 
         ApplyRange(preset.maxRadius, preset.maxHeight);
+    }
+
+    void ApplySpeed(float speedPerSec, float boostMultiplier, float acceleration, float deceleration)
+    {
+        Config::WritePanel(PanelFloat::SpeedPerSec, speedPerSec);
+        Config::WritePanel(PanelFloat::BoostMultiplier, boostMultiplier);
+        Config::WritePanel(PanelFloat::Acceleration, acceleration);
+        Config::WritePanel(PanelFloat::Deceleration, deceleration);
     }
 
     void ApplyRange(float radius, float height)

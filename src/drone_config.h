@@ -53,9 +53,10 @@ namespace DroneConfig
         // -- for a slider mid-drag, where the drone should react but a disk
         // write every frame would not. PersistPanel writes the current cached
         // value to disk once the edit is done. WritePanel does both, for a
-        // single action (reset button, preset). The drone-side effects of a
-        // change (range requests, live audio) live in PanelSettings, which
-        // is what the panel rows call.
+        // single action (reset button, preset). These change the stored
+        // value only: they do not apply it to the drone (range requests,
+        // live audio). Call PanelSettings for that; it is what the panel
+        // rows use.
         static float ReadPanel(PanelFloat id);
         static float SetPanelLive(PanelFloat id, float value);
         static void  PersistPanel(PanelFloat id);

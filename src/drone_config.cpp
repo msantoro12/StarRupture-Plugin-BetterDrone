@@ -98,13 +98,13 @@ namespace DroneConfig
             return static_cast<float>(atof(buf));
         }
 
-        // Every write to the panel file goes through this one lock, so a
-        // value can be committed from the render thread (the F10 panel) and
-        // the game thread at once without relying on kernel32's own
-        // undocumented locking around WritePrivateProfileString. Recursive,
-        // so a caller can hold it across reading the value it is about to
-        // write: two writers of one key then land in the order they read,
-        // and the file never ends up behind the cache.
+        // Every write to the panel file goes through this one lock, so the
+        // file never depends on kernel32's own undocumented locking around
+        // WritePrivateProfileString. Recursive, so a caller can hold it
+        // across reading the value it is about to write: two writers of one
+        // key then land in the order they read, and the file never ends up
+        // behind the cache. It covers the file only; the cached values are
+        // atomics, and nothing here orders them against any other state.
         std::recursive_mutex g_panelFileMutex;
 
         void PanelWriteFloat(const char* section, const char* key, float value)

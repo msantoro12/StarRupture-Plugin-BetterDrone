@@ -502,10 +502,16 @@ static void GetLiveSpeedFields(PresetStore::Field* out)
 
 static void ApplySpeedFields(const PresetStore::Field* fields, int count)
 {
-    if (count > 0) PanelSettings::Write(PanelFloat::SpeedPerSec,     fields[0].value);
-    if (count > 1) PanelSettings::Write(PanelFloat::BoostMultiplier, fields[1].value);
-    if (count > 2) PanelSettings::Write(PanelFloat::Acceleration,    fields[2].value);
-    if (count > 3) PanelSettings::Write(PanelFloat::Deceleration,    fields[3].value);
+    float speed = DroneConfig::Config::ReadSpeedPerSec();
+    float boost = DroneConfig::Config::ReadBoostMultiplier();
+    float accel = DroneConfig::Config::ReadAcceleration();
+    float decel = DroneConfig::Config::ReadDeceleration();
+    if (count > 0) speed = fields[0].value;
+    if (count > 1) boost = fields[1].value;
+    if (count > 2) accel = fields[2].value;
+    if (count > 3) decel = fields[3].value;
+
+    PanelSettings::ApplySpeed(speed, boost, accel, decel);
 }
 
 static bool IsBuiltinSpeedName(const char* name)

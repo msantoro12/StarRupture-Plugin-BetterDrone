@@ -10,9 +10,13 @@
 // needs to change a panel setting runs the very same code. Nothing here
 // draws.
 //
-// SetLive touches only the cache and atomics. Commit, Write and the preset
-// appliers also write BetterDrone-Panel.ini, which DroneConfig serializes
-// behind one lock, so they are safe to call from any thread.
+// SetLive touches only the cache and atomics. Commit and the preset
+// appliers also write BetterDrone-Panel.ini, and DroneConfig serializes
+// those file writes behind one lock. That is all the lock covers: the
+// panel calls everything here from the render thread, and a range
+// setting's cache update and its drone request are two separate steps, so
+// keep to one writer per setting. The preset appliers also read
+// g_drone.valid, which the game thread writes without synchronization.
 namespace PanelSettings
 {
     // Values closer than this count as equal: a row is "at its default", a
@@ -28,9 +32,6 @@ namespace PanelSettings
     // Persists the cached value. Called once an edit is done, not on every
     // drag step.
     void Commit(DroneConfig::PanelFloat id);
-
-    // SetLive then Commit, for a single action (a reset, a saved preset).
-    float Write(DroneConfig::PanelFloat id, float value);
 
     // Master Volume is a "set all" convenience, not a fifth stored value: it
     // derives its display from the four volumes, so it can never drift out
@@ -128,7 +129,13 @@ namespace PanelSettings
     void ApplySpeedPreset(const SpeedPreset& preset);
     void ApplyRangePreset(const RangePreset& preset);
 
+    // Sets and persists all four speed values. The one body behind a speed
+    // preset and a saved speed preset.
+    void ApplySpeed(float speedPerSec, float boostMultiplier, float acceleration, float deceleration);
+
     // Sets and persists both range values, then queues the drone update.
-    // The one body behind a range preset and a saved range preset.
+    // The one body behind a range preset and a saved range preset. Unlike
+    // ApplyRangePreset it does not check that the drone settings CDO has
+    // been found, and neither does the saved-preset path that calls it.
     void ApplyRange(float radius, float height);
 }
