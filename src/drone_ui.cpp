@@ -2,6 +2,7 @@
 #include "drone_settings.h"
 #include "drone_config.h"
 #include "drone_audio.h"
+#include "panel_settings.h"
 #include "preset_store.h"
 #include "ui_widgets.h"
 #include "plugin_helpers.h"
@@ -23,7 +24,9 @@ static char g_registeredToggleKey[64] = {};
 
 namespace
 {
-    constexpr float kActiveEpsilon = 0.0001f;
+    using PanelSettings::kActiveEpsilon;
+    using DroneConfig::PanelFloat;
+
     constexpr int   kTableFlags = (1 << 6) | (1 << 9) | (3 << 13);
 
     // Mirrors drone_config.cpp's GetModuleDirectory: resolved via this
@@ -237,61 +240,22 @@ namespace
         return changed;
     }
 
-    float DeriveMasterVolume()
-    {
-        float vols[DroneAudio::kVolCount];
-        for (int i = 0; i < DroneAudio::kVolCount; ++i)
-            vols[i] = DroneConfig::Config::ReadAudioVolume(DroneAudio::kVolumeKeys[i]);
-
-        float maxV = vols[0];
-        bool allEqual = true;
-        for (int i = 0; i < DroneAudio::kVolCount; ++i)
-        {
-            if (std::fabs(vols[i] - vols[0]) > kActiveEpsilon) allEqual = false;
-            if (vols[i] > maxV) maxV = vols[i];
-        }
-
-        return allEqual ? vols[0] : maxV;
-    }
-
-    // Updates the drone's live audio immediately (an atomic store, same as
-    // a single row's own drag path) and the cache the rows below read from,
-    // so they visibly track a master drag; does not touch BetterDrone-Panel.ini.
-    void ApplyMasterVolumeLive(float value)
-    {
-        for (const char* key : DroneAudio::kVolumeKeys)
-        {
-            DroneConfig::Config::SetAudioVolumeLive(key, value);
-            DroneAudio::SetVolume(key, value);
-        }
-    }
-
-    // Persists all four volumes to BetterDrone-Panel.ini. Called once the
-    // edit is done, not on every drag step; ApplyMasterVolumeLive already
-    // updated the cache each of those already wrote to.
-    void PersistMasterVolume()
-    {
-        for (const char* key : DroneAudio::kVolumeKeys)
-            DroneConfig::Config::PersistAudioVolume(key);
-    }
-
     // One row per DroneAudio::kVolumeKeys entry, live-applied to the drone
-    // and cached the same way the master row above updates them.
+    // and cached the same way the master row below updates them.
     void RenderVolumeRow(IModLoaderImGui* ui, int index)
     {
-        const char* key = DroneAudio::kVolumeKeys[index];
+        const PanelFloat id = DroneConfig::AudioVolumeId(index);
         char rowId[24];
         snprintf(rowId, sizeof(rowId), "##vol_%d", index);
 
         float newValue = 0.0f;
         bool  commit    = false;
         if (RenderScaledRow(ui, rowId, kVolRows[index].label, kVolRows[index].tooltip,
-                             DroneConfig::Config::ReadAudioVolume(key), 1.0f, kMasterVolumeScale, &newValue, &commit))
+                             DroneConfig::Config::ReadPanel(id), 1.0f, kMasterVolumeScale, &newValue, &commit))
         {
-            DroneConfig::Config::SetAudioVolumeLive(key, newValue);
-            DroneAudio::SetVolume(key, newValue);
+            PanelSettings::SetLive(id, newValue);
             if (commit)
-                DroneConfig::Config::PersistAudioVolume(key);
+                PanelSettings::Commit(id);
         }
     }
 
@@ -317,13 +281,13 @@ namespace
         bool  commit   = false;
         if (RenderScaledRow(ui, "##master_vol", "Master Volume",
                              "Sets all four drone audio volumes below together.",
-                             DeriveMasterVolume(), 1.0f, kMasterVolumeScale, &newValue, &commit))
+                             PanelSettings::MasterVolume(), 1.0f, kMasterVolumeScale, &newValue, &commit))
         {
             if (newValue < 0.0f) newValue = 0.0f;
             if (newValue > 1.0f) newValue = 1.0f;
-            ApplyMasterVolumeLive(newValue);
+            PanelSettings::SetMasterVolumeLive(newValue);
             if (commit)
-                PersistMasterVolume();
+                PanelSettings::CommitMasterVolume();
         }
 
         for (int i = 0; i < DroneAudio::kVolCount; ++i)
@@ -332,84 +296,6 @@ namespace
         ui->EndTable();
     }
 }
-
-// Speed and range used to come as one bundled preset; split so either axis
-// can be picked independently (e.g. Better Construction speed with a
-// Map-wide range).
-struct SpeedPreset
-{
-    const char* label;
-    const char* tooltip;
-    const char* credit;
-    float speedPerSec;
-    float boostMultiplier;
-    float acceleration;
-    float deceleration;
-};
-
-struct RangePreset
-{
-    const char* label;
-    const char* tooltip;
-    const char* credit;
-    float maxRadius;
-    float maxHeight;
-};
-
-static const SpeedPreset k_speedPresets[] = {
-    { "Stock",
-      "Default un-modded StarRupture building drone speed.",
-      "Game Default",
-      // 4000.0f matches DroneConfig's own accel/decel floor (drone_config.cpp,
-      // kMinAccelDecel) rather than 0, which no longer means instant.
-      1000.0f, 2.0f, 4000.0f, 4000.0f },
-
-    { "Better Construction",
-      "Modelled on 'Better Construction Drone' by CrazyCovin -- 2.5x speed & fast acceleration.",
-      "Modelled on NexusMod #27 by CrazyCovin",
-      2500.0f, 2.5f, 5000.0f, 5000.0f },
-
-    { "Agile Builder",
-      "High speed and rapid response for mega-base building.",
-      "GSS Preset",
-      4000.0f, 3.0f, 10000.0f, 10000.0f },
-
-    { "Ludicrous Speed",
-      "Supercharged drone: ultra-fast travel and heavy boost multiplier.",
-      "GSS Preset",
-      8000.0f, 4.0f, 20000.0f, 20000.0f },
-
-    { "Long Haul",
-      "Moderate speed and boost for long-range trips -- pair with the Map-wide range preset below for full planet coverage.",
-      "GSS Preset",
-      5000.0f, 3.0f, 12000.0f, 12000.0f }
-};
-constexpr int k_speedPresetCount = static_cast<int>(sizeof(k_speedPresets) / sizeof(k_speedPresets[0]));
-
-// Every entry stays within kMaxRadiusBound/kMaxHeightBound (drone_config.cpp);
-// Map-wide sits exactly at that ceiling.
-static const RangePreset k_rangePresets[] = {
-    { "Stock",
-      "Default un-modded StarRupture building drone range.",
-      "Game Default",
-      5000.0f, 2000.0f },
-
-    { "Better Construction",
-      "Modelled on 'Better Construction Drone' by CrazyCovin -- double range.",
-      "Modelled on NexusMod #27 by CrazyCovin",
-      10000.0f, 5000.0f },
-
-    { "Agile Builder",
-      "Expanded flight envelope for mega-base building.",
-      "GSS Preset",
-      20000.0f, 10000.0f },
-
-    { "Map-wide",
-      "Build anywhere across the planet -- the same ceiling as NexusMod #27's 'Unlimited'.",
-      "Modelled on NexusMod #27 by CrazyCovin",
-      1000000.0f, 500000.0f }
-};
-constexpr int k_rangePresetCount = static_cast<int>(sizeof(k_rangePresets) / sizeof(k_rangePresets[0]));
 
 static void OnToggleKeyPressed(EModKey, EModKeyEvent event)
 {
@@ -593,30 +479,9 @@ void TickDroneMenuClose()
     }
 }
 
-static void ApplySpeedPreset(const SpeedPreset& preset)
-{
-    if (!g_drone.valid) return;
-
-    DroneConfig::Config::WriteSpeedPerSec(preset.speedPerSec);
-    DroneConfig::Config::WriteBoostMultiplier(preset.boostMultiplier);
-    DroneConfig::Config::WriteAcceleration(preset.acceleration);
-    DroneConfig::Config::WriteDeceleration(preset.deceleration);
-}
-
-static void ApplyRangePreset(const RangePreset& preset)
-{
-    if (!g_drone.valid) return;
-
-    const float radius = DroneConfig::Config::WriteMaxRadius(preset.maxRadius);
-    const float height = DroneConfig::Config::WriteMaxHeight(preset.maxHeight);
-
-    RequestMaxRadius(radius);
-    RequestMaxHeight(height);
-}
-
 // ---------------------------------------------------------------------------
 // Saved presets (PresetStore-backed) -- the player's own tweaks, named and
-// kept apart from the built-in arrays above. Per group: a live-fields
+// kept apart from the built-in tables in panel_settings.h. Per group: a live-fields
 // getter (for Save), an apply function (for picking one from the dropdown),
 // a built-in-name check (so a saved preset can never collide with, rename
 // onto, or shadow a built-in), and a suggested-base-name computer (the
@@ -637,40 +502,33 @@ static void GetLiveSpeedFields(PresetStore::Field* out)
 
 static void ApplySpeedFields(const PresetStore::Field* fields, int count)
 {
-    if (count > 0) DroneConfig::Config::WriteSpeedPerSec(fields[0].value);
-    if (count > 1) DroneConfig::Config::WriteBoostMultiplier(fields[1].value);
-    if (count > 2) DroneConfig::Config::WriteAcceleration(fields[2].value);
-    if (count > 3) DroneConfig::Config::WriteDeceleration(fields[3].value);
+    float speed = DroneConfig::Config::ReadSpeedPerSec();
+    float boost = DroneConfig::Config::ReadBoostMultiplier();
+    float accel = DroneConfig::Config::ReadAcceleration();
+    float decel = DroneConfig::Config::ReadDeceleration();
+    if (count > 0) speed = fields[0].value;
+    if (count > 1) boost = fields[1].value;
+    if (count > 2) accel = fields[2].value;
+    if (count > 3) decel = fields[3].value;
+
+    PanelSettings::ApplySpeed(speed, boost, accel, decel);
 }
 
 static bool IsBuiltinSpeedName(const char* name)
 {
-    for (int i = 0; i < k_speedPresetCount; ++i)
-        if (strcmp(k_speedPresets[i].label, name) == 0)
+    for (const PanelSettings::SpeedPreset& preset : PanelSettings::kSpeedPresets)
+        if (strcmp(preset.label, name) == 0)
             return true;
     return false;
 }
 
 static void ComputeSpeedSuggestedBase(char* out, int cap)
 {
-    const float speed = DroneConfig::Config::ReadSpeedPerSec();
-    const float boost = DroneConfig::Config::ReadBoostMultiplier();
-    const float accel = DroneConfig::Config::ReadAcceleration();
-    const float decel = DroneConfig::Config::ReadDeceleration();
-
-    for (int i = 0; i < k_speedPresetCount; ++i)
-    {
-        const auto& p = k_speedPresets[i];
-        if (std::fabs(speed - p.speedPerSec) <= kActiveEpsilon &&
-            std::fabs(boost - p.boostMultiplier) <= kActiveEpsilon &&
-            std::fabs(accel - p.acceleration) <= kActiveEpsilon &&
-            std::fabs(decel - p.deceleration) <= kActiveEpsilon)
-        {
-            snprintf(out, cap, "%s Custom", p.label);
-            return;
-        }
-    }
-    snprintf(out, cap, "Custom");
+    const int match = PanelSettings::MatchingSpeedPreset();
+    if (match >= 0)
+        snprintf(out, cap, "%s Custom", PanelSettings::kSpeedPresets[match].label);
+    else
+        snprintf(out, cap, "Custom");
 }
 
 constexpr const char* kRangeGroup = "Range";
@@ -689,36 +547,24 @@ static void ApplyRangeFields(const PresetStore::Field* fields, int count)
     if (count > 0) radius = fields[0].value;
     if (count > 1) height = fields[1].value;
 
-    radius = DroneConfig::Config::WriteMaxRadius(radius);
-    height = DroneConfig::Config::WriteMaxHeight(height);
-    RequestMaxRadius(radius);
-    RequestMaxHeight(height);
+    PanelSettings::ApplyRange(radius, height);
 }
 
 static bool IsBuiltinRangeName(const char* name)
 {
-    for (int i = 0; i < k_rangePresetCount; ++i)
-        if (strcmp(k_rangePresets[i].label, name) == 0)
+    for (const PanelSettings::RangePreset& preset : PanelSettings::kRangePresets)
+        if (strcmp(preset.label, name) == 0)
             return true;
     return false;
 }
 
 static void ComputeRangeSuggestedBase(char* out, int cap)
 {
-    const float radius = DroneConfig::Config::ReadMaxRadius();
-    const float height = DroneConfig::Config::ReadMaxHeight();
-
-    for (int i = 0; i < k_rangePresetCount; ++i)
-    {
-        const auto& p = k_rangePresets[i];
-        if (std::fabs(radius - p.maxRadius) <= kActiveEpsilon &&
-            std::fabs(height - p.maxHeight) <= kActiveEpsilon)
-        {
-            snprintf(out, cap, "%s Custom", p.label);
-            return;
-        }
-    }
-    snprintf(out, cap, "Custom");
+    const int match = PanelSettings::MatchingRangePreset();
+    if (match >= 0)
+        snprintf(out, cap, "%s Custom", PanelSettings::kRangePresets[match].label);
+    else
+        snprintf(out, cap, "Custom");
 }
 
 // Persists across frames per group: which saved preset is selected, and
@@ -920,14 +766,14 @@ void RenderDronePanel(IModLoaderImGui* ui)
     // Construction, Agile Builder) in the same window -- ImGui derives a
     // widget's ID from its label, so the two loops would otherwise collide.
     ui->PushIDStr("speed_presets");
-    for (int i = 0; i < k_speedPresetCount; ++i)
+    for (int i = 0; i < PanelSettings::kSpeedPresetCount; ++i)
     {
-        const auto& preset = k_speedPresets[i];
+        const auto& preset = PanelSettings::kSpeedPresets[i];
         if (i > 0) ui->SameLine(0.0f, -1.0f);
 
         if (ui->SmallButton(preset.label))
         {
-            ApplySpeedPreset(preset);
+            PanelSettings::ApplySpeedPreset(preset);
         }
         if (ui->IsItemHovered())
         {
@@ -984,9 +830,9 @@ void RenderDronePanel(IModLoaderImGui* ui)
                              DroneConfig::Config::ReadSpeedPerSec(), g_drone.origSpeedPerSec,
                              kSpeedScale[unitIdx], &newSpeed, &speedCommit))
         {
-            DroneConfig::Config::SetSpeedPerSecLive(newSpeed);
+            PanelSettings::SetLive(PanelFloat::SpeedPerSec, newSpeed);
             if (speedCommit)
-                DroneConfig::Config::PersistSpeedPerSec();
+                PanelSettings::Commit(PanelFloat::SpeedPerSec);
         }
 
         float newAccel = 0.0f;
@@ -995,9 +841,9 @@ void RenderDronePanel(IModLoaderImGui* ui)
                              DroneConfig::Config::ReadAcceleration(), DroneConfig::Config::DefaultAcceleration(),
                              kRateScale[unitIdx], &newAccel, &accelCommit))
         {
-            DroneConfig::Config::SetAccelerationLive(newAccel);
+            PanelSettings::SetLive(PanelFloat::Acceleration, newAccel);
             if (accelCommit)
-                DroneConfig::Config::PersistAcceleration();
+                PanelSettings::Commit(PanelFloat::Acceleration);
         }
 
         float newDecel = 0.0f;
@@ -1006,9 +852,9 @@ void RenderDronePanel(IModLoaderImGui* ui)
                              DroneConfig::Config::ReadDeceleration(), DroneConfig::Config::DefaultDeceleration(),
                              kRateScale[unitIdx], &newDecel, &decelCommit))
         {
-            DroneConfig::Config::SetDecelerationLive(newDecel);
+            PanelSettings::SetLive(PanelFloat::Deceleration, newDecel);
             if (decelCommit)
-                DroneConfig::Config::PersistDeceleration();
+                PanelSettings::Commit(PanelFloat::Deceleration);
         }
 
         float newBoost = 0.0f;
@@ -1017,9 +863,9 @@ void RenderDronePanel(IModLoaderImGui* ui)
                              DroneConfig::Config::ReadBoostMultiplier(), DroneConfig::Config::DefaultBoostMultiplier(),
                              kBoostScale, &newBoost, &boostCommit))
         {
-            DroneConfig::Config::SetBoostMultiplierLive(newBoost);
+            PanelSettings::SetLive(PanelFloat::BoostMultiplier, newBoost);
             if (boostCommit)
-                DroneConfig::Config::PersistBoostMultiplier();
+                PanelSettings::Commit(PanelFloat::BoostMultiplier);
         }
 
         ui->EndTable();
@@ -1031,14 +877,14 @@ void RenderDronePanel(IModLoaderImGui* ui)
     ui->Spacing();
 
     ui->PushIDStr("range_presets");
-    for (int i = 0; i < k_rangePresetCount; ++i)
+    for (int i = 0; i < PanelSettings::kRangePresetCount; ++i)
     {
-        const auto& preset = k_rangePresets[i];
+        const auto& preset = PanelSettings::kRangePresets[i];
         if (i > 0) ui->SameLine(0.0f, -1.0f);
 
         if (ui->SmallButton(preset.label))
         {
-            ApplyRangePreset(preset);
+            PanelSettings::ApplyRangePreset(preset);
         }
         if (ui->IsItemHovered())
         {
@@ -1077,10 +923,9 @@ void RenderDronePanel(IModLoaderImGui* ui)
                              engineRadius, g_drone.origMaxRadius,
                              kRadiusScale[unitIdx], &newRadius, &radiusCommit))
         {
-            const float radius = DroneConfig::Config::SetMaxRadiusLive(newRadius);
-            RequestMaxRadius(radius);
+            const float radius = PanelSettings::SetLive(PanelFloat::MaxRadius, newRadius);
             if (radiusCommit)
-                DroneConfig::Config::PersistMaxRadius();
+                PanelSettings::Commit(PanelFloat::MaxRadius);
             engineRadius = radius;
         }
 
@@ -1107,10 +952,9 @@ void RenderDronePanel(IModLoaderImGui* ui)
                              engineHeight, g_drone.origMaxHeight,
                              kHeightScale[unitIdx], &newHeight, &heightCommit))
         {
-            const float height = DroneConfig::Config::SetMaxHeightLive(newHeight);
-            RequestMaxHeight(height);
+            const float height = PanelSettings::SetLive(PanelFloat::MaxHeight, newHeight);
             if (heightCommit)
-                DroneConfig::Config::PersistMaxHeight();
+                PanelSettings::Commit(PanelFloat::MaxHeight);
             engineHeight = height;
         }
 

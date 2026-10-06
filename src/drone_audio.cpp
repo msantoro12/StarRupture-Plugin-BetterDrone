@@ -175,7 +175,7 @@ namespace DroneAudio
         void ReadAudioConfig()
         {
             for (int v = 0; v < kVolCount; ++v)
-                g_vol[v].store(DroneConfig::Config::ReadAudioVolume(kVolumeKeys[v]), std::memory_order_relaxed);
+                g_vol[v].store(DroneConfig::Config::ReadPanel(DroneConfig::AudioVolumeId(v)), std::memory_order_relaxed);
         }
     }
 
