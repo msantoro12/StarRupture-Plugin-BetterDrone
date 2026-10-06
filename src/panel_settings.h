@@ -15,8 +15,11 @@
 // those file writes behind one lock. That is all the lock covers: the
 // panel calls everything here from the render thread, and a range
 // setting's cache update and its drone request are two separate steps, so
-// keep to one writer per setting. The preset appliers also read
-// g_drone.valid, which the game thread writes without synchronization.
+// keep to one writer per setting. The speed appliers are also called from
+// the game tick, by the preset hotkeys (drone_ui.cpp), which then are the
+// speed settings' writer while the panel is closed and never both at once.
+// The preset appliers also read g_drone.valid, which the game thread
+// writes without synchronization.
 namespace PanelSettings
 {
     // Values closer than this count as equal: a row is "at its default", a
@@ -43,6 +46,24 @@ namespace PanelSettings
     // Speed and range used to come as one bundled preset; split so either
     // axis can be picked independently (e.g. Better Construction speed with
     // a Map-wide range).
+    // The four numbers a speed preset sets.
+    struct SpeedValues
+    {
+        float speedPerSec;
+        float boostMultiplier;
+        float acceleration;
+        float deceleration;
+    };
+
+    // True when every field of a is within kActiveEpsilon of b's. The one
+    // comparison behind "this preset is active" and the hotkeys' dial.
+    inline bool SpeedValuesEqual(const SpeedValues& a, const SpeedValues& b)
+    {
+        auto within = [](float x, float y) { return (x > y ? x - y : y - x) <= kActiveEpsilon; };
+        return within(a.speedPerSec, b.speedPerSec) && within(a.boostMultiplier, b.boostMultiplier) &&
+               within(a.acceleration, b.acceleration) && within(a.deceleration, b.deceleration);
+    }
+
     struct SpeedPreset
     {
         const char* label;
@@ -81,17 +102,28 @@ namespace PanelSettings
           "GSS Preset",
           4000.0f, 3.0f, 10000.0f, 10000.0f },
 
-        { "Ludicrous Speed",
-          "Supercharged drone: ultra-fast travel and heavy boost multiplier.",
-          "GSS Preset",
-          8000.0f, 4.0f, 20000.0f, 20000.0f },
-
         { "Long Haul",
           "Moderate speed and boost for long-range trips -- pair with the Map-wide range preset below for full planet coverage.",
           "GSS Preset",
-          5000.0f, 3.0f, 12000.0f, 12000.0f }
+          5000.0f, 3.0f, 12000.0f, 12000.0f },
+
+        { "Ludicrous Speed",
+          "Supercharged drone: ultra-fast travel and heavy boost multiplier.",
+          "GSS Preset",
+          8000.0f, 4.0f, 20000.0f, 20000.0f }
     };
     inline constexpr int kSpeedPresetCount = static_cast<int>(std::size(kSpeedPresets));
+
+    // Listed slowest to fastest, so the panel buttons read in the same order
+    // the preset hotkeys step.
+    constexpr bool SpeedPresetsAscend()
+    {
+        for (int i = 1; i < kSpeedPresetCount; ++i)
+            if (kSpeedPresets[i].speedPerSec < kSpeedPresets[i - 1].speedPerSec)
+                return false;
+        return true;
+    }
+    static_assert(SpeedPresetsAscend(), "kSpeedPresets must stay ordered by speedPerSec");
 
     // Every entry stays within DroneConfig's radius and height bounds
     // (kMaxRadiusBound/kMaxHeightBound in drone_config.cpp); Map-wide sits

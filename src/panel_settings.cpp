@@ -77,18 +77,14 @@ namespace PanelSettings
 
     int MatchingSpeedPreset()
     {
-        const float speed = Config::ReadSpeedPerSec();
-        const float boost = Config::ReadBoostMultiplier();
-        const float accel = Config::ReadAcceleration();
-        const float decel = Config::ReadDeceleration();
+        const SpeedValues live = {
+            Config::ReadSpeedPerSec(), Config::ReadBoostMultiplier(),
+            Config::ReadAcceleration(), Config::ReadDeceleration() };
 
         for (int i = 0; i < kSpeedPresetCount; ++i)
         {
             const SpeedPreset& p = kSpeedPresets[i];
-            if (std::fabs(speed - p.speedPerSec) <= kActiveEpsilon &&
-                std::fabs(boost - p.boostMultiplier) <= kActiveEpsilon &&
-                std::fabs(accel - p.acceleration) <= kActiveEpsilon &&
-                std::fabs(decel - p.deceleration) <= kActiveEpsilon)
+            if (SpeedValuesEqual(live, { p.speedPerSec, p.boostMultiplier, p.acceleration, p.deceleration }))
                 return i;
         }
         return -1;

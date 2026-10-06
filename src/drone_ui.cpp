@@ -798,6 +798,11 @@ static void RenderSavedPresetsRow(IModLoaderImGui* ui, const char* idScope, cons
 // through every speed preset the panel offers (the built-in buttons and the
 // saved dropdown), slowest to fastest, while the drone is out. The keybind
 // callbacks only raise a flag; the step is applied from the game tick.
+//
+// The tick reads PresetStore, which the panel also uses from the render
+// thread, so s_savedPresetsMutex covers every PresetStore call on both
+// sides. It is held only while the dial is built and chosen from, never
+// across the settings writes that apply a stop.
 // ---------------------------------------------------------------------------
 
 namespace
@@ -805,12 +810,9 @@ namespace
     // One stop on the speed dial.
     struct SpeedStop
     {
-        char  name[PresetStore::kMaxNameLen];
-        int   builtinIndex;   // into PanelSettings::kSpeedPresets, -1 for a saved preset
-        float speedPerSec;
-        float boostMultiplier;
-        float acceleration;
-        float deceleration;
+        char                       name[PresetStore::kMaxNameLen];
+        bool                       saved;
+        PanelSettings::SpeedValues values;
     };
 
     constexpr int       kMaxSpeedStops = PanelSettings::kSpeedPresetCount + kMaxSavedPresetsListed;
@@ -826,14 +828,6 @@ namespace
     void OnPrevPresetKey(EModKey, EModKeyEvent) { s_stepSlower.store(true, std::memory_order_relaxed); }
     void OnNextPresetKey(EModKey, EModKeyEvent) { s_stepFaster.store(true, std::memory_order_relaxed); }
 
-    bool SameSpeedValues(const SpeedStop& stop, float speed, float boost, float accel, float decel)
-    {
-        return std::fabs(stop.speedPerSec - speed) <= kActiveEpsilon &&
-               std::fabs(stop.boostMultiplier - boost) <= kActiveEpsilon &&
-               std::fabs(stop.acceleration - accel) <= kActiveEpsilon &&
-               std::fabs(stop.deceleration - decel) <= kActiveEpsilon;
-    }
-
     // Every preset the panel offers, built-ins in button order then saved in
     // dropdown order, sorted slowest to fastest. The sort is stable, so equal
     // speeds keep that panel order. A preset that repeats an earlier one's
@@ -842,28 +836,21 @@ namespace
     int CollectSpeedStops(SpeedStop* stops)
     {
         int count = 0;
-        auto add = [&](const char* name, int builtinIndex, const float* v)
+        auto add = [&](const char* name, bool saved, PanelSettings::SpeedValues values)
         {
-            const float speed = (std::min)(v[0], DroneConfig::Config::MaxSpeedPerSec());
+            values.speedPerSec = (std::min)(values.speedPerSec, DroneConfig::Config::MaxSpeedPerSec());
             for (int i = 0; i < count; ++i)
-                if (SameSpeedValues(stops[i], speed, v[1], v[2], v[3]))
+                if (PanelSettings::SpeedValuesEqual(stops[i].values, values))
                     return;
 
             SpeedStop& stop = stops[count++];
             snprintf(stop.name, sizeof(stop.name), "%s", name);
-            stop.builtinIndex    = builtinIndex;
-            stop.speedPerSec     = speed;
-            stop.boostMultiplier = v[1];
-            stop.acceleration    = v[2];
-            stop.deceleration    = v[3];
+            stop.saved  = saved;
+            stop.values = values;
         };
 
-        for (int i = 0; i < PanelSettings::kSpeedPresetCount; ++i)
-        {
-            const PanelSettings::SpeedPreset& p = PanelSettings::kSpeedPresets[i];
-            const float v[kSpeedFieldCount] = { p.speedPerSec, p.boostMultiplier, p.acceleration, p.deceleration };
-            add(p.label, i, v);
-        }
+        for (const PanelSettings::SpeedPreset& p : PanelSettings::kSpeedPresets)
+            add(p.label, false, { p.speedPerSec, p.boostMultiplier, p.acceleration, p.deceleration });
 
         char names[kMaxSavedPresetsListed][PresetStore::kMaxNameLen];
         const int savedCount = PresetStore::ListNames(kSpeedGroup, names, kMaxSavedPresetsListed);
@@ -874,28 +861,12 @@ namespace
             if (!PresetStore::Load(kSpeedGroup, names[i], fields, kSpeedFieldCount))
                 continue;
 
-            const float v[kSpeedFieldCount] = { fields[0].value, fields[1].value, fields[2].value, fields[3].value };
-            add(names[i], -1, v);
+            add(names[i], true, { fields[0].value, fields[1].value, fields[2].value, fields[3].value });
         }
 
-        std::stable_sort(stops, stops + count,
-                         [](const SpeedStop& a, const SpeedStop& b) { return a.speedPerSec < b.speedPerSec; });
+        std::stable_sort(stops, stops + count, [](const SpeedStop& a, const SpeedStop& b)
+                         { return a.values.speedPerSec < b.values.speedPerSec; });
         return count;
-    }
-
-    // Applies a stop through the panel's own paths, and points the saved
-    // dropdown at it the way picking it there would.
-    void ApplySpeedStop(const SpeedStop& stop)
-    {
-        if (stop.builtinIndex >= 0)
-        {
-            PanelSettings::ApplySpeedPreset(PanelSettings::kSpeedPresets[stop.builtinIndex]);
-            return;
-        }
-
-        PresetStore::Field fields[kSpeedFieldCount];
-        if (ApplySavedPreset(kSpeedGroup, stop.name, fields, kSpeedFieldCount, &GetLiveSpeedFields, &ApplySpeedFields))
-            snprintf(s_speedPresetRow.selected, sizeof(s_speedPresetRow.selected), "%s", stop.name);
     }
 
     // The toast's text. Written on the game tick, read by the widget's render
@@ -908,10 +879,11 @@ namespace
     };
     PresetToast g_presetToast;
 
-    // Game thread only.
-    WidgetHandle s_toastWidget = nullptr;
-    bool         s_toastShown  = false;
-    ULONGLONG    s_toastHideAt = 0;
+    // The widget handle and whether it is up. Atomic because shutdown can
+    // run off the game thread on a loader older than 1.22.0.
+    std::atomic<WidgetHandle> s_toastWidget{ nullptr };
+    std::atomic<bool>         s_toastShown{ false };
+    ULONGLONG                 s_toastHideAt = 0; // game thread only
 
     // ImGui window flags with no PluginWindowFlags_* macro; the values mirror
     // ImGuiWindowFlags like the macros do.
@@ -960,11 +932,9 @@ namespace
         }
 
         s_toastHideAt = GetTickCount64() + kToastMs;
-        if (!s_toastShown && s_toastWidget && s_self && s_self->hooks->UI)
-        {
-            s_self->hooks->UI->SetWidgetVisible(s_toastWidget, true);
-            s_toastShown = true;
-        }
+        WidgetHandle widget = s_toastWidget.load();
+        if (widget && s_self && s_self->hooks->UI && !s_toastShown.exchange(true))
+            s_self->hooks->UI->SetWidgetVisible(widget, true);
     }
 
     // Moves one stop along the dial: direction -1 is slower, +1 is faster.
@@ -972,51 +942,76 @@ namespace
     // used) steps to the nearest preset in that direction.
     void StepSpeedPreset(int direction)
     {
-        std::lock_guard<std::mutex> lock(s_savedPresetsMutex);
+        // Same guard as the panel's built-in buttons: nothing to apply to
+        // until the drone settings CDO is found, and no toast for a no-op.
+        if (!g_drone.valid)
+            return;
 
-        SpeedStop stops[kMaxSpeedStops];
-        const int count = CollectSpeedStops(stops);
-
-        PresetStore::Field live[kSpeedFieldCount];
-        GetLiveSpeedFields(live);
-
-        int current = -1;
-        for (int i = 0; i < count; ++i)
+        bool      apply  = false;
+        SpeedStop target = {};
+        char      shownName[PresetStore::kMaxNameLen] = {};
         {
-            if (SameSpeedValues(stops[i], live[0].value, live[1].value, live[2].value, live[3].value))
+            std::lock_guard<std::mutex> lock(s_savedPresetsMutex);
+
+            SpeedStop stops[kMaxSpeedStops];
+            const int count = CollectSpeedStops(stops);
+
+            PresetStore::Field liveFields[kSpeedFieldCount];
+            GetLiveSpeedFields(liveFields);
+            const PanelSettings::SpeedValues live = {
+                liveFields[0].value, liveFields[1].value, liveFields[2].value, liveFields[3].value };
+
+            int current = -1;
+            for (int i = 0; i < count; ++i)
             {
-                current = i;
-                break;
+                if (PanelSettings::SpeedValuesEqual(stops[i].values, live))
+                {
+                    current = i;
+                    break;
+                }
+            }
+
+            int next = -1;
+            if (current >= 0)
+            {
+                const int step = current + direction;
+                if (step >= 0 && step < count)
+                    next = step;
+            }
+            else if (direction > 0)
+            {
+                for (int i = 0; i < count && next < 0; ++i)
+                    if (stops[i].values.speedPerSec > live.speedPerSec + PanelSettings::kActiveEpsilon)
+                        next = i;
+            }
+            else
+            {
+                for (int i = count - 1; i >= 0 && next < 0; --i)
+                    if (stops[i].values.speedPerSec < live.speedPerSec - PanelSettings::kActiveEpsilon)
+                        next = i;
+            }
+
+            const int shown = next >= 0 ? next : current;
+            snprintf(shownName, sizeof(shownName), "%s", shown >= 0 ? stops[shown].name : "Custom");
+
+            if (next >= 0)
+            {
+                apply  = true;
+                target = stops[next];
+
+                // Point the saved dropdown at it, as picking it there would.
+                if (target.saved)
+                    snprintf(s_speedPresetRow.selected, sizeof(s_speedPresetRow.selected), "%s", target.name);
             }
         }
 
-        int target = -1;
-        if (current >= 0)
-        {
-            const int next = current + direction;
-            if (next >= 0 && next < count)
-                target = next;
-        }
-        else if (direction > 0)
-        {
-            for (int i = 0; i < count && target < 0; ++i)
-                if (stops[i].speedPerSec > live[0].value + kActiveEpsilon)
-                    target = i;
-        }
-        else
-        {
-            for (int i = count - 1; i >= 0 && target < 0; --i)
-                if (stops[i].speedPerSec < live[0].value - kActiveEpsilon)
-                    target = i;
-        }
+        // The panel's own applier, outside the lock: it writes the INI.
+        if (apply)
+            PanelSettings::ApplySpeed(target.values.speedPerSec, target.values.boostMultiplier,
+                                      target.values.acceleration, target.values.deceleration);
 
-        if (target >= 0)
-            ApplySpeedStop(stops[target]);
-
-        const int shown = target >= 0 ? target : current;
-        ShowPresetToast(shown >= 0 ? stops[shown].name : "Custom");
-        LOG_DEBUG("StepSpeedPreset: %s -> %s", direction > 0 ? "faster" : "slower",
-                  shown >= 0 ? stops[shown].name : "Custom");
+        ShowPresetToast(shownName);
+        LOG_DEBUG("StepSpeedPreset: %s -> %s", direction > 0 ? "faster" : "slower", shownName);
     }
 }
 
@@ -1028,9 +1023,10 @@ void InitDronePresetKeys(IPluginSelf* self)
     if (self->hooks->UI)
     {
         static const PluginWidgetDesc desc = { "BetterDrone Preset", &RenderPresetToast, &kToastHints };
-        s_toastWidget = self->hooks->UI->RegisterWidget(&desc);
-        if (s_toastWidget)
-            self->hooks->UI->SetWidgetVisible(s_toastWidget, false);
+        WidgetHandle widget = self->hooks->UI->RegisterWidget(&desc);
+        if (widget)
+            self->hooks->UI->SetWidgetVisible(widget, false);
+        s_toastWidget.store(widget);
     }
 
     if (self->hooks->Input)
@@ -1044,22 +1040,23 @@ void InitDronePresetKeys(IPluginSelf* self)
 
 void ShutdownDronePresetKeys(IPluginSelf* self)
 {
-    if (self && self->hooks)
-    {
-        if (self->hooks->Input)
-        {
-            self->hooks->Input->UnregisterKeybindByName(s_prevPresetKeyName, EModKeyEvent::Pressed, &OnPrevPresetKey);
-            self->hooks->Input->UnregisterKeybindByName(s_nextPresetKeyName, EModKeyEvent::Pressed, &OnNextPresetKey);
-        }
-
-        if (s_toastWidget && self->hooks->UI)
-            self->hooks->UI->UnregisterWidget(s_toastWidget);
-    }
-
-    s_toastWidget = nullptr;
-    s_toastShown  = false;
+    // Taken out first, so a tick still running cannot reach the widget.
+    WidgetHandle widget = s_toastWidget.exchange(nullptr);
+    s_toastShown.store(false);
     s_stepSlower.store(false, std::memory_order_relaxed);
     s_stepFaster.store(false, std::memory_order_relaxed);
+
+    if (!self || !self->hooks)
+        return;
+
+    if (self->hooks->Input)
+    {
+        self->hooks->Input->UnregisterKeybindByName(s_prevPresetKeyName, EModKeyEvent::Pressed, &OnPrevPresetKey);
+        self->hooks->Input->UnregisterKeybindByName(s_nextPresetKeyName, EModKeyEvent::Pressed, &OnNextPresetKey);
+    }
+
+    if (widget && self->hooks->UI)
+        self->hooks->UI->UnregisterWidget(widget);
 }
 
 void TickDronePresetKeys()
@@ -1075,11 +1072,12 @@ void TickDronePresetKeys()
         if (faster) StepSpeedPreset(+1);
     }
 
-    if (s_toastShown && GetTickCount64() >= s_toastHideAt)
+    if (s_toastShown.load() && GetTickCount64() >= s_toastHideAt)
     {
-        s_toastShown = false;
-        if (s_self && s_self->hooks->UI)
-            s_self->hooks->UI->SetWidgetVisible(s_toastWidget, false);
+        WidgetHandle widget = s_toastWidget.load();
+        s_toastShown.store(false);
+        if (widget && s_self && s_self->hooks->UI)
+            s_self->hooks->UI->SetWidgetVisible(widget, false);
     }
 }
 
