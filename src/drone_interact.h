@@ -43,7 +43,7 @@
 struct IPluginSelf;
 struct IPluginHookScanner;
 
-namespace SDK { class ACrCharacterPlayerBase; }
+namespace SDK { class ACrCharacterPlayerBase; class ACrPlayerControllerBase; class UCrUW_MapMenu; }
 
 // Resolve every AOB the interact path needs. Callable only from
 // OnPluginLoadHooks — the loader refuses scans made anywhere else.
@@ -77,3 +77,12 @@ SDK::ACrCharacterPlayerBase* LocalPlayerCharacter();
 
 // Game thread only.
 bool IsLocalPlayerInDrone();
+
+// Game thread only. The local player's controller, or nullptr outside a game.
+// Valid for the current tick only.
+SDK::ACrPlayerControllerBase* LocalPlayerController();
+
+// Game thread only. The map, if it is the active widget on the local player's
+// menu layer, whether it was opened from drone mode or on foot. Valid for the
+// current tick only.
+SDK::UCrUW_MapMenu* ActiveLocalMap();
