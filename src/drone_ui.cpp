@@ -5,12 +5,15 @@
 #include "panel_settings.h"
 #include "preset_store.h"
 #include "ui_widgets.h"
+#include "drone_interact.h"
 #include "plugin_helpers.h"
 #include <windows.h>
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 
 // preset_store.h declares BetterDrone::PresetStore; alias it down to the
 // bare PresetStore:: used throughout the saved-presets code below.
@@ -626,6 +629,30 @@ using ApplyFieldsFn    = void (*)(const PresetStore::Field* fields, int count);
 using IsBuiltinNameFn  = bool (*)(const char* name);
 using ComputeSuggestFn = void (*)(char* out, int cap);
 
+// The most saved presets a group's dropdown lists, and the preset hotkeys
+// step through.
+constexpr int kMaxSavedPresetsListed = 16;
+
+// Guards PresetStore and the saved-preset row state. The store is not
+// internally synchronized: the panel (render thread) and the preset
+// hotkeys (game tick) both go through it, so each takes this first.
+static std::mutex s_savedPresetsMutex;
+
+// Loads the stored preset `name` over the live values and applies it, the
+// one body behind picking a saved preset in the dropdown and stepping to
+// one with a hotkey. Returns false if the preset is gone.
+static bool ApplySavedPreset(const char* group, const char* name,
+                             PresetStore::Field* fields, int fieldCount,
+                             GetLiveFieldsFn getLive, ApplyFieldsFn apply)
+{
+    getLive(fields); // seed so a key missing from this preset stays unchanged
+    if (!PresetStore::Load(group, name, fields, fieldCount))
+        return false;
+
+    apply(fields, fieldCount);
+    return true;
+}
+
 // A dropdown of the group's saved presets plus Save/Rename/Delete, in
 // addition to (not replacing) the built-in preset buttons above it. Save
 // never prompts -- it computes the suggested name itself and selects the
@@ -636,10 +663,12 @@ static void RenderSavedPresetsRow(IModLoaderImGui* ui, const char* idScope, cons
                             IsBuiltinNameFn isBuiltin, ComputeSuggestFn computeSuggest,
                             PresetRowState& state)
 {
+    std::lock_guard<std::mutex> lock(s_savedPresetsMutex);
+
     ui->PushIDStr(idScope);
 
-    char names[16][PresetStore::kMaxNameLen];
-    const int count = PresetStore::ListNames(group, names, 16);
+    char names[kMaxSavedPresetsListed][PresetStore::kMaxNameLen];
+    const int count = PresetStore::ListNames(group, names, kMaxSavedPresetsListed);
 
     bool selectedStillValid = false;
     for (int i = 0; i < count; ++i)
@@ -662,9 +691,7 @@ static void RenderSavedPresetsRow(IModLoaderImGui* ui, const char* idScope, cons
             if (ui->Selectable(names[i], isSelected))
             {
                 snprintf(state.selected, sizeof(state.selected), "%s", names[i]);
-                getLive(fields); // seed so a key missing from this preset stays unchanged
-                if (PresetStore::Load(group, state.selected, fields, fieldCount))
-                    apply(fields, fieldCount);
+                ApplySavedPreset(group, state.selected, fields, fieldCount, getLive, apply);
             }
         }
         ui->EndCombo();
@@ -764,6 +791,294 @@ static void RenderSavedPresetsRow(IModLoaderImGui* ui, const char* idScope, cons
         ui->TextColored(1.0f, 0.4f, 0.4f, 1.0f, state.errorMsg);
 
     ui->PopID();
+}
+
+// ---------------------------------------------------------------------------
+// Speed preset hotkeys. "Previous Preset Key" and "Next Preset Key" step
+// through every speed preset the panel offers (the built-in buttons and the
+// saved dropdown), slowest to fastest, while the drone is out. The keybind
+// callbacks only raise a flag; the step is applied from the game tick.
+//
+// The tick reads PresetStore, which the panel also uses from the render
+// thread, so s_savedPresetsMutex covers every PresetStore call on both
+// sides. It is held only while the dial is built and chosen from, never
+// across the settings writes that apply a stop.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // One stop on the speed dial.
+    struct SpeedStop
+    {
+        char                       name[PresetStore::kMaxNameLen];
+        bool                       saved;
+        PanelSettings::SpeedValues values;
+    };
+
+    constexpr int       kMaxSpeedStops = PanelSettings::kSpeedPresetCount + kMaxSavedPresetsListed;
+    constexpr ULONGLONG kToastMs       = 1500;
+
+    // Raised by the keybind callbacks, consumed on the game tick.
+    std::atomic<bool> s_stepSlower{ false };
+    std::atomic<bool> s_stepFaster{ false };
+
+    char s_prevPresetKeyName[64] = {};
+    char s_nextPresetKeyName[64] = {};
+
+    void OnPrevPresetKey(EModKey, EModKeyEvent) { s_stepSlower.store(true, std::memory_order_relaxed); }
+    void OnNextPresetKey(EModKey, EModKeyEvent) { s_stepFaster.store(true, std::memory_order_relaxed); }
+
+    // Every preset the panel offers, built-ins in button order then saved in
+    // dropdown order, sorted slowest to fastest. The sort is stable, so equal
+    // speeds keep that panel order. A preset that repeats an earlier one's
+    // values is left out, so a saved copy of a built-in is not a dead stop.
+    // Caller holds s_savedPresetsMutex.
+    int CollectSpeedStops(SpeedStop* stops)
+    {
+        int count = 0;
+        auto add = [&](const char* name, bool saved, PanelSettings::SpeedValues values)
+        {
+            values.speedPerSec = (std::min)(values.speedPerSec, DroneConfig::Config::MaxSpeedPerSec());
+            for (int i = 0; i < count; ++i)
+                if (PanelSettings::SpeedValuesEqual(stops[i].values, values))
+                    return;
+
+            SpeedStop& stop = stops[count++];
+            snprintf(stop.name, sizeof(stop.name), "%s", name);
+            stop.saved  = saved;
+            stop.values = values;
+        };
+
+        for (const PanelSettings::SpeedPreset& p : PanelSettings::kSpeedPresets)
+            add(p.label, false, { p.speedPerSec, p.boostMultiplier, p.acceleration, p.deceleration });
+
+        char names[kMaxSavedPresetsListed][PresetStore::kMaxNameLen];
+        const int savedCount = PresetStore::ListNames(kSpeedGroup, names, kMaxSavedPresetsListed);
+        for (int i = 0; i < savedCount; ++i)
+        {
+            PresetStore::Field fields[kSpeedFieldCount];
+            GetLiveSpeedFields(fields); // a key missing from the preset keeps the live value
+            if (!PresetStore::Load(kSpeedGroup, names[i], fields, kSpeedFieldCount))
+                continue;
+
+            add(names[i], true, { fields[0].value, fields[1].value, fields[2].value, fields[3].value });
+        }
+
+        std::stable_sort(stops, stops + count, [](const SpeedStop& a, const SpeedStop& b)
+                         { return a.values.speedPerSec < b.values.speedPerSec; });
+        return count;
+    }
+
+    // The toast's text. Written on the game tick, read by the widget's render
+    // callback, so both take the lock. The speed is shown in the panel's unit.
+    struct PresetToast
+    {
+        std::mutex mutex;
+        char       name[PresetStore::kMaxNameLen] = {};
+        float      speedPerSec = 0.0f;
+    };
+    PresetToast g_presetToast;
+
+    // The widget handle and whether it is up. Atomic because shutdown can
+    // run off the game thread on a loader older than 1.22.0.
+    std::atomic<WidgetHandle> s_toastWidget{ nullptr };
+    std::atomic<bool>         s_toastShown{ false };
+    ULONGLONG                 s_toastHideAt = 0; // game thread only
+
+    // ImGui window flags with no PluginWindowFlags_* macro; the values mirror
+    // ImGuiWindowFlags like the macros do.
+    constexpr int kWindowFlagAlwaysAutoResize = 1 << 6;
+
+    // A small borderless box that sizes to its text and takes no input. Left
+    // at the loader's default position.
+    const PluginWindowHints kToastHints = {
+        0.0f, 0.0f, -1.0f, -1.0f, 0.0f, 0.0f, 0, 0,
+        PluginWindowFlags_NoTitleBar | PluginWindowFlags_NoResize | PluginWindowFlags_NoMove |
+        PluginWindowFlags_NoScrollbar | PluginWindowFlags_NoSavedSettings |
+        PluginWindowFlags_NoMouseInputs | kWindowFlagAlwaysAutoResize
+    };
+
+    void RenderPresetToast(IModLoaderImGui* ui)
+    {
+        char  name[PresetStore::kMaxNameLen];
+        float speedPerSec;
+        {
+            std::lock_guard<std::mutex> lock(g_presetToast.mutex);
+            snprintf(name, sizeof(name), "%s", g_presetToast.name);
+            speedPerSec = g_presetToast.speedPerSec;
+        }
+        if (!name[0])
+            return;
+
+        char unit[16] = {};
+        DroneConfig::Config::ReadSpeedUnit(unit, sizeof(unit));
+        const FieldUnitScale& scale = kSpeedScale[SelectUnitIndex(unit)];
+
+        char speedText[40];
+        snprintf(speedText, sizeof(speedText), scale.format, speedPerSec * scale.factor);
+
+        ui->Text(name);
+        ui->Text(speedText);
+    }
+
+    // Game thread only. Shows `name` with the speed now in effect, and keeps
+    // it up for kToastMs from this call.
+    void ShowPresetToast(const char* name)
+    {
+        {
+            std::lock_guard<std::mutex> lock(g_presetToast.mutex);
+            snprintf(g_presetToast.name, sizeof(g_presetToast.name), "%s", name);
+            g_presetToast.speedPerSec = DroneConfig::Config::ReadSpeedPerSec();
+        }
+
+        s_toastHideAt = GetTickCount64() + kToastMs;
+        WidgetHandle widget = s_toastWidget.load();
+        if (widget && s_self && s_self->hooks->UI && !s_toastShown.exchange(true))
+            s_self->hooks->UI->SetWidgetVisible(widget, true);
+    }
+
+    // Moves one stop along the dial: direction -1 is slower, +1 is faster.
+    // Clamps at the ends. A speed that sits on no preset (the sliders were
+    // used) steps to the nearest preset in that direction.
+    void StepSpeedPreset(int direction)
+    {
+        // Same guard as the panel's built-in buttons: nothing to apply to
+        // until the drone settings CDO is found, and no toast for a no-op.
+        if (!g_drone.valid)
+            return;
+
+        bool      apply  = false;
+        SpeedStop target = {};
+        char      shownName[PresetStore::kMaxNameLen] = {};
+        {
+            std::lock_guard<std::mutex> lock(s_savedPresetsMutex);
+
+            SpeedStop stops[kMaxSpeedStops];
+            const int count = CollectSpeedStops(stops);
+
+            PresetStore::Field liveFields[kSpeedFieldCount];
+            GetLiveSpeedFields(liveFields);
+            const PanelSettings::SpeedValues live = {
+                liveFields[0].value, liveFields[1].value, liveFields[2].value, liveFields[3].value };
+
+            int current = -1;
+            for (int i = 0; i < count; ++i)
+            {
+                if (PanelSettings::SpeedValuesEqual(stops[i].values, live))
+                {
+                    current = i;
+                    break;
+                }
+            }
+
+            int next = -1;
+            if (current >= 0)
+            {
+                const int step = current + direction;
+                if (step >= 0 && step < count)
+                    next = step;
+            }
+            else if (direction > 0)
+            {
+                for (int i = 0; i < count && next < 0; ++i)
+                    if (stops[i].values.speedPerSec > live.speedPerSec + PanelSettings::kActiveEpsilon)
+                        next = i;
+            }
+            else
+            {
+                for (int i = count - 1; i >= 0 && next < 0; --i)
+                    if (stops[i].values.speedPerSec < live.speedPerSec - PanelSettings::kActiveEpsilon)
+                        next = i;
+            }
+
+            const int shown = next >= 0 ? next : current;
+            snprintf(shownName, sizeof(shownName), "%s", shown >= 0 ? stops[shown].name : "Custom");
+
+            if (next >= 0)
+            {
+                apply  = true;
+                target = stops[next];
+
+                // Point the saved dropdown at it, as picking it there would.
+                if (target.saved)
+                    snprintf(s_speedPresetRow.selected, sizeof(s_speedPresetRow.selected), "%s", target.name);
+            }
+        }
+
+        // The panel's own applier, outside the lock: it writes the INI.
+        if (apply)
+            PanelSettings::ApplySpeed(target.values.speedPerSec, target.values.boostMultiplier,
+                                      target.values.acceleration, target.values.deceleration);
+
+        ShowPresetToast(shownName);
+        LOG_DEBUG("StepSpeedPreset: %s -> %s", direction > 0 ? "faster" : "slower", shownName);
+    }
+}
+
+void InitDronePresetKeys(IPluginSelf* self)
+{
+    if (!self || !self->hooks)
+        return;
+
+    if (self->hooks->UI)
+    {
+        static const PluginWidgetDesc desc = { "BetterDrone Preset", &RenderPresetToast, &kToastHints };
+        WidgetHandle widget = self->hooks->UI->RegisterWidget(&desc);
+        if (widget)
+            self->hooks->UI->SetWidgetVisible(widget, false);
+        s_toastWidget.store(widget);
+    }
+
+    if (self->hooks->Input)
+    {
+        DroneConfig::Config::ReadPrevPresetKey(s_prevPresetKeyName, sizeof(s_prevPresetKeyName));
+        DroneConfig::Config::ReadNextPresetKey(s_nextPresetKeyName, sizeof(s_nextPresetKeyName));
+        self->hooks->Input->RegisterKeybindByName(s_prevPresetKeyName, EModKeyEvent::Pressed, &OnPrevPresetKey);
+        self->hooks->Input->RegisterKeybindByName(s_nextPresetKeyName, EModKeyEvent::Pressed, &OnNextPresetKey);
+    }
+}
+
+void ShutdownDronePresetKeys(IPluginSelf* self)
+{
+    // Taken out first, so a tick still running cannot reach the widget.
+    WidgetHandle widget = s_toastWidget.exchange(nullptr);
+    s_toastShown.store(false);
+    s_stepSlower.store(false, std::memory_order_relaxed);
+    s_stepFaster.store(false, std::memory_order_relaxed);
+
+    if (!self || !self->hooks)
+        return;
+
+    if (self->hooks->Input)
+    {
+        self->hooks->Input->UnregisterKeybindByName(s_prevPresetKeyName, EModKeyEvent::Pressed, &OnPrevPresetKey);
+        self->hooks->Input->UnregisterKeybindByName(s_nextPresetKeyName, EModKeyEvent::Pressed, &OnNextPresetKey);
+    }
+
+    if (widget && self->hooks->UI)
+        self->hooks->UI->UnregisterWidget(widget);
+}
+
+void TickDronePresetKeys()
+{
+    const bool slower = s_stepSlower.exchange(false, std::memory_order_relaxed);
+    const bool faster = s_stepFaster.exchange(false, std::memory_order_relaxed);
+
+    // On foot, in a game menu or with the panel up, a press is simply dropped.
+    if ((slower || faster) &&
+        IsLocalPlayerInDrone() && !IsGameMenuOpen() && !s_menuOpen.load(std::memory_order_relaxed))
+    {
+        if (slower) StepSpeedPreset(-1);
+        if (faster) StepSpeedPreset(+1);
+    }
+
+    if (s_toastShown.load() && GetTickCount64() >= s_toastHideAt)
+    {
+        WidgetHandle widget = s_toastWidget.load();
+        s_toastShown.store(false);
+        if (widget && s_self && s_self->hooks->UI)
+            s_self->hooks->UI->SetWidgetVisible(widget, false);
+    }
 }
 
 static void RenderUnavailableMessage(IModLoaderImGui* imgui, float avail_x, float avail_y, const char* message)

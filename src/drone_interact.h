@@ -86,3 +86,7 @@ SDK::ACrPlayerControllerBase* LocalPlayerController();
 // menu layer, whether it was opened from drone mode or on foot. Valid for the
 // current tick only.
 SDK::UCrUW_MapMenu* ActiveLocalMap();
+
+// Game thread only. True while anything is on the game's menu layer: the map,
+// the inventory, a building window, the pause menu.
+bool IsGameMenuOpen();

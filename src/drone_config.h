@@ -42,6 +42,8 @@ namespace DroneConfig
         static void ReadMapKey(char* outBuffer, int bufferSize);
         static bool ReadDroneRevealsMap();
         static void ReadToggleKey(char* outBuffer, int bufferSize);
+        static void ReadPrevPresetKey(char* outBuffer, int bufferSize);
+        static void ReadNextPresetKey(char* outBuffer, int bufferSize);
 
         // kBoostKeyFollowsSprint means "follow the game's Sprint key"; any
         // other value is a custom combo. Never empty.

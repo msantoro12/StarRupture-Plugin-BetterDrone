@@ -64,6 +64,7 @@ static void OnEngineTick(float deltaSeconds)
     TickDroneMenuClose();
     TickDroneMenuOpen();
     TickMapProbe(deltaSeconds);
+    TickDronePresetKeys();
 }
 
 // Fires only from the loader's own settings window, for the entries
@@ -124,6 +125,7 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     InitGameSessionTracking(self);
     InitDroneUI(self);
     InitMapProbe(self);
+    InitDronePresetKeys(self);
 
     self->hooks->Engine->RegisterOnInit(OnEngineInit);
     self->hooks->Engine->RegisterOnShutdown(OnEngineShutdown);
@@ -155,6 +157,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     ShutdownWavePatch();
     DroneAudio::Shutdown();
     ShutdownMapProbe(g_self);
+    ShutdownDronePresetKeys(g_self);
     ShutdownDroneUI(g_self);
     ShutdownGameSessionTracking(g_self);
     RestoreCDODefaults();

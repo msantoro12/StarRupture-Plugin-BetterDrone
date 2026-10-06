@@ -366,6 +366,8 @@ namespace DroneConfig
             // to every plugin registered on it, not just one, so this is safe.
             { "Controls",    "Toggle Key",             ConfigValueType::Keybind, "F10",        "Key to toggle the BetterDrone menu window", 0.0f, 0.0f },
             { "Controls",    "Boost Key",              ConfigValueType::Keybind, kBoostKeyFollowsSprint, "Key held to boost drone speed, following your Sprint key unless you set one here.", 0.0f, 0.0f },
+            { "Controls",    "Previous Preset Key",    ConfigValueType::Keybind, "Hyphen",    "Key that steps to the next slower speed preset while the drone is out.", 0.0f, 0.0f },
+            { "Controls",    "Next Preset Key",        ConfigValueType::Keybind, "Equals",    "Key that steps to the next faster speed preset while the drone is out.", 0.0f, 0.0f },
         };
         static const ConfigSchema schema{ entries, static_cast<int>(sizeof(entries) / sizeof(entries[0])) };
 
@@ -405,6 +407,16 @@ namespace DroneConfig
     void Config::ReadToggleKey(char* outBuffer, int bufferSize)
     {
         ReadKeybind(s_self, "Controls", "Toggle Key", "F10", outBuffer, bufferSize);
+    }
+
+    void Config::ReadPrevPresetKey(char* outBuffer, int bufferSize)
+    {
+        ReadKeybind(s_self, "Controls", "Previous Preset Key", "Hyphen", outBuffer, bufferSize);
+    }
+
+    void Config::ReadNextPresetKey(char* outBuffer, int bufferSize)
+    {
+        ReadKeybind(s_self, "Controls", "Next Preset Key", "Equals", outBuffer, bufferSize);
     }
 
     void Config::ReadBoostKey(char* outBuffer, int bufferSize)
