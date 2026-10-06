@@ -18,6 +18,7 @@ namespace PresetStore = BetterDrone::PresetStore;
 static IPluginSelf* s_self = nullptr;
 static PanelHandle s_panelHandle = nullptr;
 static std::atomic<bool> s_menuOpen{ false };
+static std::atomic<bool> s_openRequested{ false };
 static void* g_inputCaptureToken = nullptr;
 static char g_registeredToggleKey[64] = {};
 
@@ -453,6 +454,14 @@ static void OnPanelClosed(PanelHandle handle)
     ApplyMenuClosed("OnPanelClosed");
 }
 
+// The BETTER DRONE row in the pause menu. onClick runs on the game thread
+// inside the menu's click handler, so it only raises a flag; the panel is
+// opened by TickDroneMenuOpen on the next tick.
+static void OnPauseMenuRowClicked(void*)
+{
+    s_openRequested.store(true, std::memory_order_relaxed);
+}
+
 void InitDroneUI(IPluginSelf* self)
 {
     s_self = self;
@@ -470,6 +479,22 @@ void InitDroneUI(IPluginSelf* self)
     s_panelHandle = self->hooks->UI->RegisterPanel(&desc);
     self->hooks->UI->RegisterOnPanelWindowClosed(OnPanelClosed);
 
+    // Server builds have no game menu (hooks->GameMenu is null), and a
+    // client whose menu patterns did not resolve is not worth a row nobody
+    // will see; the toggle key still opens the panel either way.
+    if (self->hooks->GameMenu && self->hooks->GameMenu->IsAvailable())
+    {
+        PluginGameMenuEntryDesc row{};
+        row.id      = "betterdrone";
+        row.label   = "BETTER DRONE";
+        row.targets = PLUGIN_GAME_MENU_PAUSE;
+        row.anchor  = PLUGIN_GAME_MENU_ANCHOR_AFTER_OPTIONS;
+        row.onClick = OnPauseMenuRowClicked;
+
+        if (!self->hooks->GameMenu->AddEntry(self, &row))
+            LOG_WARN("InitDroneUI: could not add the pause menu row");
+    }
+
     if (self->hooks->Input)
     {
         self->hooks->Input->RegisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, OnCloseKeyPressed);
@@ -483,6 +508,9 @@ void ShutdownDroneUI(IPluginSelf*)
 {
     if (s_self && s_self->hooks)
     {
+        if (s_self->hooks->GameMenu)
+            s_self->hooks->GameMenu->RemoveAllEntries(s_self);
+
         if (s_self->hooks->Input)
         {
             s_self->hooks->Input->UnregisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, OnCloseKeyPressed);
@@ -505,6 +533,7 @@ void ShutdownDroneUI(IPluginSelf*)
         }
     }
     s_self = nullptr;
+    s_openRequested.store(false, std::memory_order_relaxed);
     s_menuOpen.store(false, std::memory_order_relaxed);
 }
 
@@ -590,6 +619,18 @@ void TickDroneMenuClose()
     {
         LOG_DEBUG("TickDroneMenuClose: applying a pending close request");
         CloseDroneMenu();
+    }
+}
+
+// Applies a pending request from the pause menu row. Opens (never toggles),
+// so a click while the panel is already up, or an F10 press in between, can
+// not close it.
+void TickDroneMenuOpen()
+{
+    if (s_openRequested.exchange(false, std::memory_order_relaxed))
+    {
+        LOG_DEBUG("TickDroneMenuOpen: opening from the pause menu row");
+        OpenDroneMenu();
     }
 }
 

@@ -11,3 +11,7 @@ void RenderDronePanel(IModLoaderImGui* imgui);
 // tick (OnEngineTick), never from the render callback -- see its definition
 // for why.
 void TickDroneMenuClose();
+
+// Applies a pending open request from the pause menu row. Must be called from
+// the game tick (OnEngineTick).
+void TickDroneMenuOpen();
