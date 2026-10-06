@@ -876,6 +876,7 @@ namespace
         std::mutex mutex;
         char       name[PresetStore::kMaxNameLen] = {};
         float      speedPerSec = 0.0f;
+        float      boostSpeedPerSec = 0.0f;
     };
     PresetToast g_presetToast;
 
@@ -889,10 +890,14 @@ namespace
     // ImGuiWindowFlags like the macros do.
     constexpr int kWindowFlagAlwaysAutoResize = 1 << 6;
 
-    // A small borderless box that sizes to its text and takes no input. Left
-    // at the loader's default position.
-    const PluginWindowHints kToastHints = {
-        0.0f, 0.0f, -1.0f, -1.0f, 0.0f, 0.0f, 0, 0,
+    // A small borderless box that sizes to its text and takes no input,
+    // pinned to the top-right corner of the display: position (display
+    // width, 0) with pivot (1, 0), "always" so it holds if the window is
+    // resized. The position stays unset (-1) until RenderPresetToast has
+    // read the display size, which only the render callback can ask the
+    // loader for; the hints are read and written on the render thread only.
+    PluginWindowHints s_toastHints = {
+        0.0f, 0.0f, -1.0f, -1.0f, 1.0f, 0.0f, 0, 0,
         PluginWindowFlags_NoTitleBar | PluginWindowFlags_NoResize | PluginWindowFlags_NoMove |
         PluginWindowFlags_NoScrollbar | PluginWindowFlags_NoSavedSettings |
         PluginWindowFlags_NoMouseInputs | kWindowFlagAlwaysAutoResize
@@ -900,12 +905,22 @@ namespace
 
     void RenderPresetToast(IModLoaderImGui* ui)
     {
+        // The loader reads the hints before this callback, so a new size
+        // lands on the next frame; the window is not drawn on its first
+        // frame anyway (ImGui sizes a new auto-fit window unseen).
+        float displayW = 0.0f, displayH = 0.0f;
+        ui->GetDisplaySize(&displayW, &displayH);
+        s_toastHints.pos_x = displayW;
+        s_toastHints.pos_y = 0.0f;
+
         char  name[PresetStore::kMaxNameLen];
         float speedPerSec;
+        float boostSpeedPerSec;
         {
             std::lock_guard<std::mutex> lock(g_presetToast.mutex);
             snprintf(name, sizeof(name), "%s", g_presetToast.name);
-            speedPerSec = g_presetToast.speedPerSec;
+            speedPerSec      = g_presetToast.speedPerSec;
+            boostSpeedPerSec = g_presetToast.boostSpeedPerSec;
         }
         if (!name[0])
             return;
@@ -917,8 +932,14 @@ namespace
         char speedText[40];
         snprintf(speedText, sizeof(speedText), scale.format, speedPerSec * scale.factor);
 
+        char boostFormat[48];
+        snprintf(boostFormat, sizeof(boostFormat), "Boost %s", scale.format);
+        char boostText[56];
+        snprintf(boostText, sizeof(boostText), boostFormat, boostSpeedPerSec * scale.factor);
+
         ui->Text(name);
         ui->Text(speedText);
+        ui->Text(boostText);
     }
 
     // Game thread only. Shows `name` with the speed now in effect, and keeps
@@ -929,6 +950,12 @@ namespace
             std::lock_guard<std::mutex> lock(g_presetToast.mutex);
             snprintf(g_presetToast.name, sizeof(g_presetToast.name), "%s", name);
             g_presetToast.speedPerSec = DroneConfig::Config::ReadSpeedPerSec();
+
+            // What the drone reaches with the boost key held, capped the
+            // way OnDroneTick caps it.
+            g_presetToast.boostSpeedPerSec = (std::min)(
+                g_presetToast.speedPerSec * DroneConfig::Config::ReadBoostMultiplier(),
+                DroneConfig::Config::MaxSpeedPerSec());
         }
 
         s_toastHideAt = GetTickCount64() + kToastMs;
@@ -1022,7 +1049,7 @@ void InitDronePresetKeys(IPluginSelf* self)
 
     if (self->hooks->UI)
     {
-        static const PluginWidgetDesc desc = { "BetterDrone Preset", &RenderPresetToast, &kToastHints };
+        static const PluginWidgetDesc desc = { "BetterDrone Preset", &RenderPresetToast, &s_toastHints };
         WidgetHandle widget = self->hooks->UI->RegisterWidget(&desc);
         if (widget)
             self->hooks->UI->SetWidgetVisible(widget, false);
