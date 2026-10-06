@@ -699,6 +699,18 @@ SDK::ACrCharacterPlayerBase* LocalPlayerCharacter()
     return pc ? pc->CrChar : nullptr;
 }
 
+SDK::ACrPlayerControllerBase* LocalPlayerController()
+{
+    return LocalController();
+}
+
+SDK::UCrUW_MapMenu* ActiveLocalMap()
+{
+    SDK::ACrPlayerControllerBase* pc = LocalController();
+    SDK::UCommonActivatableWidgetContainerBase* layer = pc ? FindMenuLayer(pc) : nullptr;
+    return layer ? ActiveMap(layer) : nullptr;
+}
+
 bool IsLocalPlayerInDrone()
 {
     try

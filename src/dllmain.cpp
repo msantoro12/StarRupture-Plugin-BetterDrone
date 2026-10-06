@@ -4,6 +4,7 @@
 #include "drone_wave_patch.h"
 #include "drone_audio.h"
 #include "drone_floor_guard.h"
+#include "map_probe.h"
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
 #include <windows.h>
@@ -62,6 +63,7 @@ static void OnEngineTick(float deltaSeconds)
     DroneAudio::Tick(deltaSeconds);
     TickDroneMenuClose();
     TickDroneMenuOpen();
+    TickMapProbe(deltaSeconds);
 }
 
 // Fires only from the loader's own settings window, for the entries
@@ -121,6 +123,7 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     DroneAudio::Initialize();
     InitGameSessionTracking(self);
     InitDroneUI(self);
+    InitMapProbe(self);
 
     self->hooks->Engine->RegisterOnInit(OnEngineInit);
     self->hooks->Engine->RegisterOnShutdown(OnEngineShutdown);
@@ -151,6 +154,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     ShutdownDroneFog();
     ShutdownWavePatch();
     DroneAudio::Shutdown();
+    ShutdownMapProbe(g_self);
     ShutdownDroneUI(g_self);
     ShutdownGameSessionTracking(g_self);
     RestoreCDODefaults();
