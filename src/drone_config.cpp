@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 namespace DroneConfig
 {
@@ -94,8 +95,19 @@ namespace DroneConfig
             return static_cast<float>(atof(buf));
         }
 
+        // Every write to the panel file goes through this one lock, so a
+        // value can be committed from the render thread (the F10 panel) and
+        // the game thread at once without relying on kernel32's own
+        // undocumented locking around WritePrivateProfileString. Recursive,
+        // so a caller can hold it across reading the value it is about to
+        // write: two writers of one key then land in the order they read,
+        // and the file never ends up behind the cache.
+        std::recursive_mutex g_panelFileMutex;
+
         void PanelWriteFloat(const char* section, const char* key, float value)
         {
+            std::lock_guard<std::recursive_mutex> lock(g_panelFileMutex);
+
             char path[MAX_PATH] = {};
             GetPanelConfigPath(path, sizeof(path));
 
@@ -114,6 +126,8 @@ namespace DroneConfig
 
         void PanelWriteString(const char* section, const char* key, const char* value)
         {
+            std::lock_guard<std::recursive_mutex> lock(g_panelFileMutex);
+
             char path[MAX_PATH] = {};
             GetPanelConfigPath(path, sizeof(path));
             WritePrivateProfileStringA(section, key, value, path);
@@ -235,6 +249,10 @@ namespace DroneConfig
 
             void Persist() const
             {
+                // Read the value under the file lock: a concurrent Persist
+                // of this key then writes whatever the cache holds when its
+                // turn comes, never an older value after a newer one.
+                std::lock_guard<std::recursive_mutex> lock(g_panelFileMutex);
                 PanelWriteFloat(m_section, m_key, m_value.load(std::memory_order_relaxed));
             }
 
@@ -426,6 +444,10 @@ namespace DroneConfig
     {
         if (!unit) return;
         const int index = SpeedUnitIndex(unit);
+
+        // Cache and file change together, so two threads picking a unit
+        // leave both on the same one.
+        std::lock_guard<std::recursive_mutex> lock(g_panelFileMutex);
         g_speedUnit.store(index);
         PanelWriteString("UI", "SpeedUnit", kSpeedUnits[index]);
     }
