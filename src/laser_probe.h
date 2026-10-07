@@ -17,8 +17,9 @@
 //   * what a camera line trace hits, on every trace channel, on foot while
 //     mining and always from the drone.
 //
-// Game thread only. It keeps no UObject pointers between ticks, only the
-// object indices it compares to notice a change.
+// Game thread only. It keeps no object pointers between ticks, only the
+// object indices it compares to notice a change, and the UClass pointers of
+// native classes, which live as long as the process.
 
 struct IPluginSelf;
 struct IPluginHookScanner;

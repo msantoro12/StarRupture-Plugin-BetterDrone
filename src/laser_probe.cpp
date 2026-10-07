@@ -22,14 +22,21 @@ namespace
     // has its own line cap so a chatty one cannot starve the others, and the
     // probe switches itself off after kMaxOnMs whatever else happens.
     constexpr uint64_t kMaxOnMs       = 30ull * 60ull * 1000ull;
-    constexpr int      kCapHookLines  = 400;
+    constexpr int      kCapHookLines  = 500;
     constexpr int      kCapStateLines = 300;
-    constexpr int      kCapTraceLines = 400;
+    constexpr int      kCapTraceLines = 700;
 
-    // Identical calls closer together than this are folded into one summary
-    // line, and the summary is written once the calls stop for kFlushIdleMs.
+    // Each hook has its own line budget on top of the shared cap above, so one
+    // chatty hook cannot use up the lines the others are there to capture.
+    constexpr int kHookLineBudget = 90;
+
+    // Calls of one hook that repeat the previous call, or that come closer
+    // together than kMinGapMs with the same shape, are folded into one summary
+    // line, written once the calls have stopped for kRepeatWindowMs. A call
+    // whose shape changes (an argument going null or zero, which is how a stop
+    // request looks) is always logged.
     constexpr uint64_t kRepeatWindowMs = 3000;
-    constexpr uint64_t kFlushIdleMs    = 1500;
+    constexpr uint64_t kMinGapMs       = 250;
 
     // While the character mines, the mining state is written at most this often
     // beyond the lines for each change.
@@ -40,10 +47,11 @@ namespace
     // and well past the 35 m stock tool range, so a far hit shows too.
     constexpr uint64_t kSweepIntervalMs   = 1000;
     constexpr uint64_t kSweepRelogMs      = 10000;
+    constexpr int      kMaxFullSnapshots  = 40;
     constexpr double   kTraceLength       = 10000.0;
     constexpr int      kTraceChannelCount = 32;
     constexpr int      kMaxGroups         = 16;
-    constexpr int      kMaxGroupLines     = 8;
+    constexpr int      kMaxGroupLines     = 6;
 
     // ACrOreMassBaseActor::MineResourceRequest and SetMiningGrantee are
     // ICrMassMineableInterface members, so their `this` is the interface
@@ -129,9 +137,10 @@ namespace
     std::atomic<DWORD>    g_gameThreadId{ 0 };
     std::atomic<uint64_t> g_onMs{ 0 };
 
-    std::atomic<int> g_hookLines{ 0 };
-    int              g_stateLines = 0;
-    int              g_traceLines = 0;
+    // Every line is written from the game thread, so these need no atomics.
+    int g_hookLines  = 0;
+    int g_stateLines = 0;
+    int g_traceLines = 0;
 
     bool OnGameThread()
     {
@@ -166,21 +175,10 @@ namespace
 
     void EmitHook(const char* fmt, ...)
     {
-        // The hook counter is atomic: a detour reached off the game thread
-        // logs one raw line and must not race the game thread's lines.
-        const int n = g_hookLines.fetch_add(1, std::memory_order_relaxed);
-        if (n >= kCapHookLines)
-            return;
-        if (n + 1 == kCapHookLines)
-            CapNotice(kCapHookLines);
-
-        char buf[1000];
         va_list args;
         va_start(args, fmt);
-        vsnprintf(buf, sizeof(buf), fmt, args);
+        EmitV(g_hookLines, kCapHookLines, fmt, args);
         va_end(args);
-        buf[sizeof(buf) - 1] = '\0';
-        EmitText(buf);
     }
 
     void EmitState(const char* fmt, ...)
@@ -239,7 +237,6 @@ namespace
     struct ObjDesc
     {
         bool       ok;
-        int32_t    index;
         uint32_t   flags;
         SDK::FName name;
         SDK::FName cls;
@@ -248,7 +245,6 @@ namespace
     bool DescribeSeh(const void* p, ObjDesc* out)
     {
         memset(out, 0, sizeof(*out));
-        out->index = -1;
         __try
         {
             const SDK::UObject* o = static_cast<const SDK::UObject*>(p);
@@ -277,7 +273,6 @@ namespace
             if (g_cls.ism        && o->IsA(g_cls.ism))        f |= kIsIsm;
             if (g_cls.miningComp && o->IsA(g_cls.miningComp)) f |= kIsMiningComp;
 
-            out->index = idx;
             out->name  = o->Name;
             out->cls   = o->Class->Name;
             out->flags = f;
@@ -331,7 +326,8 @@ namespace
     }
 
     // Detours can in principle be reached from a thread that is not the game
-    // thread; only the game thread may follow a pointer into an object.
+    // thread; only the game thread may follow a pointer into an object. An
+    // off-thread call is only counted.
     std::string DescribeFromHook(const void* p)
     {
         if (!p)
@@ -352,13 +348,17 @@ namespace
         std::atomic<uint64_t> offThread{ 0 };
 
         // Game thread only below.
-        bool      have   = false;
-        uint64_t  lastMs = 0;
-        uintptr_t keyA   = 0;
-        uintptr_t keyB   = 0;
-        uint32_t  keyC   = 0;
-        uint32_t  keyD   = 0;
-        uint64_t  repeats = 0;
+        bool      have        = false;
+        bool      budgetNoted = false;
+        int       lines       = 0;
+        uint64_t  lastMs      = 0;
+        uintptr_t keyA        = 0;
+        uintptr_t keyB        = 0;
+        uint32_t  keyC        = 0;
+        uint32_t  keyD        = 0;
+        uint64_t  keyE        = 0;
+        uint32_t  shape       = 0;
+        uint64_t  repeats     = 0;
         uint64_t  dtSum   = 0;
         uint64_t  dtMin   = ~0ull;
         uint64_t  dtMax   = 0;
@@ -379,7 +379,7 @@ namespace
         if (!s.repeats)
             return;
 
-        EmitHook("%s: %llu identical repeats of the line above, gap min/avg/max = %llu/%llu/%llu ms",
+        EmitHook("%s: %llu more calls of the same shape folded into the line above, gap min/avg/max = %llu/%llu/%llu ms",
             kHookShort[h], s.repeats, s.dtMin, s.dtSum / s.repeats, s.dtMax);
         s.repeats = 0;
         s.dtSum   = 0;
@@ -387,20 +387,32 @@ namespace
         s.dtMax   = 0;
     }
 
+    // Which of the arguments are null or zero. A change here is a different kind
+    // of call (a request that starts mining against one that cancels it), so it
+    // is never folded.
+    uint32_t ShapeOf(uintptr_t a, uintptr_t b, float c, float d)
+    {
+        return (a ? 1u : 0u) | (b ? 2u : 0u) | (c != 0.0f ? 4u : 0u) | (d != 0.0f ? 8u : 0u);
+    }
+
     // Records one call. Returns the gap since the previous call of this hook, or
-    // -1 when the call is an identical repeat that only counts toward the summary.
-    int64_t NoteCall(int h, uintptr_t a, uintptr_t b, float c, float d, bool foldRepeats)
+    // -1 when the call is not to be logged in full: a fold into the summary, or
+    // the hook's line budget being spent.
+    int64_t NoteCall(int h, uintptr_t a, uintptr_t b, float c, float d, uint64_t extra, bool foldRepeats)
     {
         CallStat& s = g_stat[h];
         s.total.fetch_add(1, std::memory_order_relaxed);
 
-        const uint64_t now = GetTickCount64();
-        const uint64_t dt  = s.have ? now - s.lastMs : 0;
-        const bool same = foldRepeats && s.have && dt < kRepeatWindowMs && a == s.keyA && b == s.keyB &&
-                          Bits(c) == s.keyC && Bits(d) == s.keyD;
+        const uint64_t now   = GetTickCount64();
+        const uint64_t dt    = s.have ? now - s.lastMs : 0;
+        const uint32_t shape = ShapeOf(a, b, c, d);
+        const bool identical = s.have && a == s.keyA && b == s.keyB && Bits(c) == s.keyC && Bits(d) == s.keyD &&
+                               extra == s.keyE;
+        const bool fold = foldRepeats && s.have && shape == s.shape &&
+                          ((identical && dt < kRepeatWindowMs) || dt < kMinGapMs);
         s.lastMs = now;
 
-        if (same)
+        if (fold)
         {
             ++s.repeats;
             s.dtSum += dt;
@@ -411,11 +423,26 @@ namespace
 
         FlushRepeats(h);
         const bool first = !s.have;
-        s.have = true;
-        s.keyA = a;
-        s.keyB = b;
-        s.keyC = Bits(c);
-        s.keyD = Bits(d);
+        s.have  = true;
+        s.keyA  = a;
+        s.keyB  = b;
+        s.keyC  = Bits(c);
+        s.keyD  = Bits(d);
+        s.keyE  = extra;
+        s.shape = shape;
+
+        if (s.lines >= kHookLineBudget)
+        {
+            if (!s.budgetNoted)
+            {
+                s.budgetNoted = true;
+                EmitHook("%s: line budget (%d) spent; further calls are only counted, see the totals when the "
+                         "probe is switched off", kHookShort[h], kHookLineBudget);
+            }
+            return -1;
+        }
+
+        ++s.lines;
         return first ? 0 : static_cast<int64_t>(dt);
     }
 
@@ -435,7 +462,8 @@ namespace
             else
             {
                 const int64_t gap = NoteCall(kHkMineActor, reinterpret_cast<uintptr_t>(comp),
-                    reinterpret_cast<uintptr_t>(actor), damage, rpm, true);
+                    reinterpret_cast<uintptr_t>(actor), damage, rpm,
+                    socket ^ (weakSpot ? 0x9E3779B97F4A7C15ull : 0ull), true);
                 if (gap >= 0)
                     EmitHook("MineActor comp=%p actor=%p (%s) socket=0x%llX damage=%.4f rpm=%.4f weakSpot=%d gap=%lld ms",
                         comp, actor, DescribeFromHook(actor).c_str(), socket, damage, rpm, weakSpot ? 1 : 0, gap);
@@ -458,7 +486,7 @@ namespace
             else
             {
                 const int64_t gap = NoteCall(kHkMineIsm, reinterpret_cast<uintptr_t>(comp),
-                    reinterpret_cast<uintptr_t>(physMat), damage, rpm, true);
+                    reinterpret_cast<uintptr_t>(physMat), damage, rpm, 0, true);
                 if (gap >= 0)
                     EmitHook("MineIsm comp=%p physMat=%p (%s) damage=%.4f rpm=%.4f gap=%lld ms",
                         comp, physMat, DescribeFromHook(physMat).c_str(), damage, rpm, gap);
@@ -482,7 +510,7 @@ namespace
             {
                 const void* actor = iface ? static_cast<const char*>(iface) - kMassInterfaceOffset : nullptr;
                 const int64_t gap = NoteCall(kHkMassMine, reinterpret_cast<uintptr_t>(iface),
-                    reinterpret_cast<uintptr_t>(miner), damage, rpm, true);
+                    reinterpret_cast<uintptr_t>(miner), damage, rpm, 0, true);
                 if (gap >= 0)
                     EmitHook("MassMine iface=%p actor=%p (%s) damage=%.4f rpm=%.4f miner=%p (%s) gap=%lld ms",
                         iface, actor, DescribeFromHook(actor).c_str(), damage, rpm, miner,
@@ -507,9 +535,10 @@ namespace
             {
                 const void* actor = iface ? static_cast<const char*>(iface) - kMassInterfaceOffset : nullptr;
                 const int64_t gap = NoteCall(kHkMassGrantee, reinterpret_cast<uintptr_t>(iface),
-                    reinterpret_cast<uintptr_t>(grantee), 0.0f, 0.0f, false);
-                EmitHook("MassGrantee iface=%p actor=%p (%s) grantee=%p (%s) gap=%lld ms",
-                    iface, actor, DescribeFromHook(actor).c_str(), grantee, DescribeFromHook(grantee).c_str(), gap);
+                    reinterpret_cast<uintptr_t>(grantee), 0.0f, 0.0f, 0, false);
+                if (gap >= 0)
+                    EmitHook("MassGrantee iface=%p actor=%p (%s) grantee=%p (%s) gap=%lld ms",
+                        iface, actor, DescribeFromHook(actor).c_str(), grantee, DescribeFromHook(grantee).c_str(), gap);
             }
         }
         catch (...) {}
@@ -529,9 +558,10 @@ namespace
             else
             {
                 const int64_t gap = NoteCall(kHkStopped, reinterpret_cast<uintptr_t>(comp),
-                    reinterpret_cast<uintptr_t>(actor), 0.0f, 0.0f, false);
-                EmitHook("OnMiningStopped comp=%p actor=%p (%s) gap=%lld ms",
-                    comp, actor, DescribeFromHook(actor).c_str(), gap);
+                    reinterpret_cast<uintptr_t>(actor), 0.0f, 0.0f, 0, false);
+                if (gap >= 0)
+                    EmitHook("OnMiningStopped comp=%p actor=%p (%s) gap=%lld ms",
+                        comp, actor, DescribeFromHook(actor).c_str(), gap);
             }
         }
         catch (...) {}
@@ -550,8 +580,9 @@ namespace
             }
             else
             {
-                const int64_t gap = NoteCall(kHkClear, reinterpret_cast<uintptr_t>(comp), 0, 0.0f, 0.0f, false);
-                EmitHook("ClearMiningRequests comp=%p gap=%lld ms", comp, gap);
+                const int64_t gap = NoteCall(kHkClear, reinterpret_cast<uintptr_t>(comp), 0, 0.0f, 0.0f, 0, false);
+                if (gap >= 0)
+                    EmitHook("ClearMiningRequests comp=%p gap=%lld ms", comp, gap);
             }
         }
         catch (...) {}
@@ -621,7 +652,6 @@ namespace
 
     struct SessionState
     {
-        bool     inited         = false;
         uint32_t status         = 0xFFFFFFFFu;
         int32_t  weaponDataId   = -2;
         int32_t  oreId          = -2;
@@ -634,6 +664,7 @@ namespace
         int32_t  heatLimit      = -1;
         uint64_t sweepMs        = 0;
         uint64_t lastLogMs      = 0;
+        int      fullSnapshots  = 0;
         std::string lastSig;
         bool     cdoLogged      = false;
         int      cdoTries       = 0;
@@ -683,11 +714,13 @@ namespace
     // weapon reports on foot and in the drone.
     void LogToolCdo(uint64_t now)
     {
-        if (g_s.cdoLogged || g_s.cdoTries >= 6 || now < g_s.cdoNextMs)
+        if (g_s.cdoLogged || now < g_s.cdoNextMs)
             return;
 
+        // Every 5 s at first, then every 30 s: the class may not be loaded yet,
+        // and the lookup is a scan of GObjects.
         ++g_s.cdoTries;
-        g_s.cdoNextMs = now + 5000;
+        g_s.cdoNextMs = now + (g_s.cdoTries < 6 ? 5000 : 30000);
 
         IPluginHooks* hooks = GetSelf()->hooks;
         IPluginObjectWalker* walker = hooks ? hooks->ObjectWalker : nullptr;
@@ -698,7 +731,7 @@ namespace
         if (!object || !g_cls.weaponData || !object->IsA(g_cls.weaponData))
         {
             if (g_s.cdoTries == 6)
-                EmitState("mining tool CDO '%s' not found", kMiningToolCdoName);
+                EmitState("mining tool CDO '%s' not found yet; still looking every 30 s", kMiningToolCdoName);
             return;
         }
 
@@ -828,9 +861,11 @@ namespace
     }
 
     // One line trace from the eyes the weapon trace would use, on every
-    // ETraceTypeQuery channel, simple and complex. The hits are grouped by what
-    // they hit, with the list of channels that reached it, because which channel
-    // sees ore is the question.
+    // ETraceTypeQuery slot, simple and complex. The hits are grouped by what
+    // they hit, with the list of slots that reached it, because which channel
+    // sees ore is the question. The numbers are the 32 TraceTypeQuery slots of
+    // the project's trace-channel table, 1 to 32, not ECollisionChannel values:
+    // slots the project leaves unassigned can report the same result.
     void SweepTraces(SDK::ACrCharacterPlayerBase* character, bool inDrone, uint64_t now)
     {
         SDK::FVector eye{};
@@ -856,7 +891,12 @@ namespace
         uint32_t noHit[2] = { 0, 0 };
         bool overflow = false;
 
-        const SDK::TArray<SDK::AActor*> ignore{};
+        // The drone pawn has collision of its own and the camera sits inside it,
+        // so it is ignored with the character (bIgnoreSelf covers only the
+        // character). The array is a view over this stack slot, which the
+        // engine copies before the call returns.
+        SDK::AActor* ignoreData[1] = { inDrone ? character->BuildingDrone : nullptr };
+        const SDK::TArray<SDK::AActor*> ignore(ignoreData, ignoreData[0] ? 1 : 0, 1);
         const SDK::FLinearColor colour{};
 
         for (int complex = 0; complex < 2; ++complex)
@@ -909,12 +949,24 @@ namespace
             }
         }
 
-        // The signature leaves out the distance: a moving drone would otherwise
-        // log every snapshot.
+        // What the snapshot is about: the ore. A group is interesting when its
+        // actor is an ore actor of any kind or its component is an instanced
+        // mesh (the infinite ore veins are identified by physical material).
+        // The signature covers the interesting groups only, and leaves out the
+        // distance, so flying over terrain and props neither logs nor spends
+        // the budget.
+        constexpr uint32_t kOreFlags = kIsOre | kIsMassBase | kIsMassHighRes | kIsChunk | kIsMeteor;
+        auto interesting = [](const HitGroup& g) { return (g.actor.flags & kOreFlags) || (g.comp.flags & kIsIsm); };
+
         std::string sig;
         char tmp[96];
+        bool anyInteresting = false;
         for (int g = 0; g < groupCount; ++g)
         {
+            if (!interesting(groups[g]))
+                continue;
+
+            anyInteresting = true;
             snprintf(tmp, sizeof(tmp), "|%d,%d,%d,%u,%u", groups[g].actorId, groups[g].compId, groups[g].item,
                 groups[g].channelMask[0], groups[g].channelMask[1]);
             sig += tmp;
@@ -926,34 +978,63 @@ namespace
         g_s.lastSig   = sig;
         g_s.lastLogMs = now;
 
-        const SDK::FVector body = character->K2_GetActorLocation();
-        const double dx = eye.X - body.X, dy = eye.Y - body.Y, dz = eye.Z - body.Z;
-        EmitTrace("trace %s: eye=(%.0f %.0f %.0f) dir=(%.3f %.3f %.3f) eyeToBody=%.0f uu length=%.0f | %d hits over "
-                  "%d queries, %d distinct",
-            inDrone ? "DRONE" : "foot", eye.X, eye.Y, eye.Z, dir.X, dir.Y, dir.Z,
-            std::sqrt(dx * dx + dy * dy + dz * dz), kTraceLength, totalHits, 2 * kTraceChannelCount, groupCount);
-
-        // Nearest first, so the thing the crosshair is on leads.
+        // Ore groups first, then nearest first, so what the crosshair is on leads.
         int order[kMaxGroups];
         for (int i = 0; i < groupCount; ++i)
             order[i] = i;
+        auto before = [&](int a, int b)
+        {
+            const bool ia = interesting(groups[a]);
+            const bool ib = interesting(groups[b]);
+            return ia != ib ? ia : groups[a].distance < groups[b].distance;
+        };
         for (int i = 1; i < groupCount; ++i)
-            for (int j = i; j > 0 && groups[order[j]].distance < groups[order[j - 1]].distance; --j)
+            for (int j = i; j > 0 && before(order[j], order[j - 1]); --j)
             {
                 const int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
             }
 
+        const SDK::FVector body = character->K2_GetActorLocation();
+        const double dx = eye.X - body.X, dy = eye.Y - body.Y, dz = eye.Z - body.Z;
+        const double eyeToBody = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+        // Past the snapshot budget, or with nothing ore-like in the way, one
+        // compact line says what the nearest hit is.
+        if (!anyInteresting || g_s.fullSnapshots >= kMaxFullSnapshots)
+        {
+            if (groupCount == 0)
+            {
+                EmitTrace("trace %s: no blocking hit on any channel (eyeToBody=%.0f uu)", inDrone ? "DRONE" : "foot",
+                    eyeToBody);
+                return;
+            }
+
+            const HitGroup& g = groups[order[0]];
+            EmitTrace("trace %s: %s; %d distinct hits; nearest dist=%.0f uu actor=%s | comp=%s | physMat=%s "
+                      "(eyeToBody=%.0f uu)",
+                inDrone ? "DRONE" : "foot", anyInteresting ? "ore-like hit (snapshot budget spent)" : "no ore-like hit",
+                groupCount, g.distance, ObjText(g.actor).c_str(), ObjText(g.comp).c_str(), ObjText(g.mat).c_str(),
+                eyeToBody);
+            return;
+        }
+
+        ++g_s.fullSnapshots;
+        EmitTrace("trace %s: eye=(%.0f %.0f %.0f) dir=(%.3f %.3f %.3f) eyeToBody=%.0f uu length=%.0f droneIgnored=%d | "
+                  "%d hits over %d queries, %d distinct",
+            inDrone ? "DRONE" : "foot", eye.X, eye.Y, eye.Z, dir.X, dir.Y, dir.Z, eyeToBody, kTraceLength,
+            ignoreData[0] ? 1 : 0, totalHits, 2 * kTraceChannelCount, groupCount);
+
         for (int i = 0; i < groupCount && i < kMaxGroupLines; ++i)
         {
             const HitGroup& g = groups[order[i]];
-            EmitTrace("  hit dist=%.0f uu item=%d actor=%s | comp=%s | physMat=%s | channels(simple)=%s channels(complex)=%s",
+            EmitTrace("  hit dist=%.0f uu item=%d actor=%s | comp=%s | physMat=%s | slots(simple)=%s slots(complex)=%s",
                 g.distance, g.item, ObjText(g.actor).c_str(), ObjText(g.comp).c_str(), ObjText(g.mat).c_str(),
                 MaskText(g.channelMask[0]).c_str(), MaskText(g.channelMask[1]).c_str());
         }
         if (groupCount > kMaxGroupLines || overflow)
             EmitTrace("  (more distinct hits than listed)");
         if (noHit[0] || noHit[1])
-            EmitTrace("  no blocking hit on channels(simple)=%s channels(complex)=%s",
+            EmitTrace("  no blocking hit on slots(simple)=%s slots(complex)=%s",
                 MaskText(noHit[0]).c_str(), MaskText(noHit[1]).c_str());
     }
 
@@ -974,7 +1055,7 @@ namespace
 
         // Fold-in summaries for calls that have gone quiet.
         for (int h = 0; h < kHkCount; ++h)
-            if (g_stat[h].repeats && now - g_stat[h].lastMs >= kFlushIdleMs)
+            if (g_stat[h].repeats && now - g_stat[h].lastMs >= kRepeatWindowMs)
                 FlushRepeats(h);
 
         LogToolCdo(now);
@@ -1038,7 +1119,7 @@ namespace
 
         g_gameThreadId.store(GetCurrentThreadId());
         g_onMs.store(GetTickCount64());
-        g_hookLines.store(0);
+        g_hookLines  = 0;
         g_stateLines = 0;
         g_traceLines = 0;
         g_s = SessionState{};
@@ -1046,8 +1127,10 @@ namespace
         {
             g_stat[h].total.store(0);
             g_stat[h].offThread.store(0);
-            g_stat[h].have    = false;
-            g_stat[h].repeats = 0;
+            g_stat[h].have        = false;
+            g_stat[h].budgetNoted = false;
+            g_stat[h].lines       = 0;
+            g_stat[h].repeats     = 0;
             g_stat[h].dtSum   = 0;
             g_stat[h].dtMin   = ~0ull;
             g_stat[h].dtMax   = 0;
