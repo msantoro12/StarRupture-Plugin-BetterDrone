@@ -278,10 +278,11 @@ namespace
         return static_cast<SDK::ACrGameStateBase*>(world->GameState)->MapMenuDataReplicationHelper;
     }
 
-    // The colour the game paints the local player's arrow with: MarkerPlayer in
-    // the map's marker colour asset, which the map settings point to. The asset
-    // is read through the settings' soft pointer, which holds it only once the
-    // game has loaded it, so it is checked every tick and nothing is kept.
+    // The colour of the local player's arrow: MarkerPlayer in the map's marker
+    // colour asset, which the map settings point to (assumed from the asset's
+    // field names, not read from the arrow widget). The asset is read through
+    // the settings' soft pointer, which holds it only once the game has loaded
+    // it, so it is checked every tick and nothing is kept.
     bool ReadPlayerMarkerColour(SDK::UCrMapMenuDevSettings* settings, float* linearRgb)
     {
         __try
@@ -415,7 +416,7 @@ namespace
             if (!g_loggedColourFallback)
             {
                 g_loggedColourFallback = true;
-                LOG_INFO("DroneMapMarker: the game's player marker colour is not loaded yet, using the default cyan");
+                LOG_INFO("DroneMapMarker: the game's player marker colour is not available, using the default cyan");
             }
         }
         Publish(s);

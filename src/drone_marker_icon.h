@@ -29,8 +29,9 @@ namespace DroneMarkerIcon
     {
         constexpr float kPi = 3.14159265f;
 
-        // In widget units: the arcs and diamonds span 29.7 of the game's 32 unit
-        // icon square, and the line weight keeps its proportion to the rest.
+        // In widget units, the marker is about 24 across by 38 along its heading
+        // (the arrowhead included), against the game's 32 unit icon square and
+        // its player arrow of 28 by 34. The line weight keeps its proportion.
         const float w      = 5.2f * dpi;        // half-width of the wedges' square
         const float radius = 2.2f * w;          // arcs
         const float half   = 47.5f * kPi / 180; // each arc spans 95 degrees
