@@ -38,6 +38,10 @@ namespace
 
     constexpr uint64_t kLogIntervalMs = 5000;
 
+    // The player marker colour when the game's colour asset is not loaded: the
+    // cyan of the player arrow on the map, as an ImGui colour (R 119, G 225, B 233).
+    constexpr unsigned int kFallbackColour = 0xFFE9E177u;
+
     // What the render callback draws, as plain numbers.
     struct Snapshot
     {
@@ -61,6 +65,7 @@ namespace
     int32_t  g_refSerial = 0;
     uint64_t g_lastLogMs = 0;
     bool     g_failed    = false;
+    bool     g_loggedColourFallback = false;
 
     // A transparent window the draw list rides on: no title, no input, no
     // background. The widget is shown only while there is something to draw.
@@ -234,12 +239,11 @@ namespace
         }
     }
 
-    // Everything the placement needs from the drone and the local character.
+    // Everything the placement needs from the drone.
     struct DroneState
     {
         bool   ok;
         double x, y, yawDeg;
-        float  colour[3]; // linear
     };
 
     bool ReadDrone(SDK::ACrPlayerControllerBase* pc, DroneState* out)
@@ -256,10 +260,6 @@ namespace
             out->x      = location.X;
             out->y      = location.Y;
             out->yawDeg = drone->K2_GetActorRotation().Yaw;
-
-            out->colour[0] = character->MultiplayerColor.R;
-            out->colour[1] = character->MultiplayerColor.G;
-            out->colour[2] = character->MultiplayerColor.B;
             out->ok = true;
             return true;
         }
@@ -276,6 +276,29 @@ namespace
             return nullptr;
 
         return static_cast<SDK::ACrGameStateBase*>(world->GameState)->MapMenuDataReplicationHelper;
+    }
+
+    // The colour the game paints the local player's arrow with: MarkerPlayer in
+    // the map's marker colour asset, which the map settings point to. The asset
+    // is read through the settings' soft pointer, which holds it only once the
+    // game has loaded it, so it is checked every tick and nothing is kept.
+    bool ReadPlayerMarkerColour(SDK::UCrMapMenuDevSettings* settings, float* linearRgb)
+    {
+        __try
+        {
+            SDK::UCrMapMenuMarkerDefaultColorData* colours = settings->MarkerStatusesColorData.Get();
+            if (!colours || !colours->IsA(SDK::UCrMapMenuMarkerDefaultColorData::StaticClass()))
+                return false;
+
+            linearRgb[0] = colours->MarkerPlayer.R;
+            linearRgb[1] = colours->MarkerPlayer.G;
+            linearRgb[2] = colours->MarkerPlayer.B;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
     }
 
     unsigned int ToImGuiColour(const float* linear)
@@ -380,7 +403,21 @@ namespace
         s.clip[1]   = static_cast<float>(canvas.topLeft[1]);
         s.clip[2]   = static_cast<float>(canvas.topLeft[0] + canvas.absSize[0]);
         s.clip[3]   = static_cast<float>(canvas.topLeft[1] + canvas.absSize[1]);
-        s.colour    = ToImGuiColour(drone.colour);
+
+        float linear[3];
+        if (ReadPlayerMarkerColour(settings, linear))
+        {
+            s.colour = ToImGuiColour(linear);
+        }
+        else
+        {
+            s.colour = kFallbackColour;
+            if (!g_loggedColourFallback)
+            {
+                g_loggedColourFallback = true;
+                LOG_INFO("DroneMapMarker: the game's player marker colour is not loaded yet, using the default cyan");
+            }
+        }
         Publish(s);
     }
 

@@ -20,17 +20,22 @@ namespace DroneMarkerIcon
     // headingYawDeg is the drone's world yaw. On the map, world X runs to the
     // right and world Y down the screen, so yaw 0 points right and a larger yaw
     // turns clockwise. dpi is the map's pixel scale (canvas size in pixels over
-    // its size in widget units); the icon is about 48 px across at 1.5.
+    // its size in widget units). The game's own markers (the player arrow, the
+    // building icons) sit in a 32 widget unit square, 48 px at 1.5. They merge
+    // by screen distance as the map zooms, which points to a fixed size, so the
+    // marker is sized in widget units and does not scale with zoom.
     inline void Draw(IModLoaderImGui* ui, PluginDrawList dl, float cx, float cy, float headingYawDeg,
                      float dpi, unsigned int col)
     {
         constexpr float kPi = 3.14159265f;
 
-        const float w      = 4.0f * dpi;        // half-width of the wedges' square
+        // In widget units: the arcs and diamonds span 29.7 of the game's 32 unit
+        // icon square, and the line weight keeps its proportion to the rest.
+        const float w      = 5.2f * dpi;        // half-width of the wedges' square
         const float radius = 2.2f * w;          // arcs
         const float half   = 47.5f * kPi / 180; // each arc spans 95 degrees
         const float diamond = 0.3f * radius;    // diamond half-diagonal
-        const float thick  = 1.1f * dpi;
+        const float thick  = 0.275f * w;
         const float cap    = 0.5f * thick;
 
         // Local axes: x right, y down, up (-y) is the heading. Turned clockwise
