@@ -14,8 +14,8 @@
 // Every component is spawned by this file, held only as an ObjectRef, and
 // stopped by Stop(), which the laser calls on every tick it does not fire.
 // The loops are attached to the drone camera, so they also end with the
-// drone. Assets the game has not loaded are skipped, and the laser mines as
-// before.
+// drone. The assets are loaded by path when firing starts; one that cannot
+// be loaded is skipped, and the laser mines as before.
 
 namespace SDK { class ACrCharacterPlayerBase; }
 

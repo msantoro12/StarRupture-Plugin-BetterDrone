@@ -368,7 +368,7 @@ namespace DroneConfig
             { "Controls",    "Boost Key",              ConfigValueType::Keybind, kBoostKeyFollowsSprint, "Key held to boost drone speed, following your Sprint key unless you set one here.", 0.0f, 0.0f },
             { "Controls",    "Previous Preset Key",    ConfigValueType::Keybind, "Hyphen",    "Key that steps to the next slower speed preset while the drone is out.", 0.0f, 0.0f },
             { "Controls",    "Next Preset Key",        ConfigValueType::Keybind, "Equals",    "Key that steps to the next faster speed preset while the drone is out.", 0.0f, 0.0f },
-            { "Controls",    "Mining Laser Key",       ConfigValueType::Keybind, "F",         "Key held to mine the ore under the crosshair from the drone, with the mining tool's damage and range. Host and single player only.", 0.0f, 0.0f },
+            { "Controls",    "Mining Laser Key",       ConfigValueType::Keybind, "G",         "Key held to mine the ore under the crosshair from the drone, with the mining tool's damage and range. Host and single player only.", 0.0f, 0.0f },
         };
         static const ConfigSchema schema{ entries, static_cast<int>(sizeof(entries) / sizeof(entries[0])) };
 
@@ -422,7 +422,7 @@ namespace DroneConfig
 
     void Config::ReadMiningLaserKey(char* outBuffer, int bufferSize)
     {
-        ReadKeybind(s_self, "Controls", "Mining Laser Key", "F", outBuffer, bufferSize);
+        ReadKeybind(s_self, "Controls", "Mining Laser Key", "G", outBuffer, bufferSize);
     }
 
     void Config::ReadBoostKey(char* outBuffer, int bufferSize)

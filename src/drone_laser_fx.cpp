@@ -26,17 +26,26 @@ namespace
     constexpr uint64_t kBeamWindDownMs = 3000;
 
     // The mining tool's own assets (BP_MiningToolActor's beam component, its
-    // audio components' sounds and its overheat refusal sound). They are hard
-    // references of the tool, so they are loaded whenever the tool is.
+    // audio components' sounds and its overheat refusal sound). They are not
+    // in memory while the drone holds the building tool, so they are loaded
+    // by path. Nothing keeps them loaded between firings, so each firing
+    // looks them up afresh.
     struct Assets
     {
-        NamedObject beam        { "NS_HarvesterResized" };
-        NamedObject start       { "S_Harvester_Rotate_Default_Start_Cue" };
-        NamedObject loop        { "S_Harvester_Rotate_Default_Loop_Cue" };
-        NamedObject finished    { "S_Harvester_Rotate_Default_Finished_Cue" };
-        NamedObject ore         { "S_Wpn_Hv_Stones_Loop_01_Cue" };
-        NamedObject reject      { "S_Harvester_Trigger" };
-        NamedObject attenuation { "ATT_MiningLaser" };
+        NamedObject beam        { "NS_HarvesterResized",
+            "/Game/Chimera/Weapons/MiningTool/VFX/NS_HarvesterResized.NS_HarvesterResized" };
+        NamedObject start       { "S_Harvester_Rotate_Default_Start_Cue",
+            "/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Rotate_Default_Start_Cue.S_Harvester_Rotate_Default_Start_Cue" };
+        NamedObject loop        { "S_Harvester_Rotate_Default_Loop_Cue",
+            "/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Rotate_Default_Loop_Cue.S_Harvester_Rotate_Default_Loop_Cue" };
+        NamedObject finished    { "S_Harvester_Rotate_Default_Finished_Cue",
+            "/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Rotate_Default_Finished_Cue.S_Harvester_Rotate_Default_Finished_Cue" };
+        NamedObject ore         { "S_Wpn_Hv_Stones_Loop_01_Cue",
+            "/Game/Chimera/Audio/Weapons/Harvester/S_Wpn_Hv_Stones_Loop_01_Cue.S_Wpn_Hv_Stones_Loop_01_Cue" };
+        NamedObject reject      { "S_Harvester_Trigger",
+            "/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Trigger.S_Harvester_Trigger" };
+        NamedObject attenuation { "ATT_MiningLaser",
+            "/Game/Chimera/Weapons/MiningTool/ATT_MiningLaser.ATT_MiningLaser" };
     };
 
     // The beam's parameters, under the names the tool's blueprint sets them
@@ -65,6 +74,13 @@ namespace
     Assets     g_assets;
     ParamNames g_names;
     FxState    g_fx;
+
+    void ForgetAssets()
+    {
+        for (NamedObject* slot : { &g_assets.beam, &g_assets.start, &g_assets.loop, &g_assets.finished,
+                                   &g_assets.ore, &g_assets.reject, &g_assets.attenuation })
+            slot->Forget();
+    }
 
     uint64_t NowMs()
     {
@@ -162,9 +178,10 @@ namespace
         beam->SetVariableBool(g_names.cooling, false);
     }
 
-    // Once per session: what was found, and where the listener is. The audio
-    // listener sits on the player's camera unless the game overrides it, so a
-    // camera far from the drone would leave the drone's sounds out of earshot.
+    // Once per session: what was found, whether it shows and plays, and
+    // where the listener is. The audio listener sits on the player's camera
+    // unless the game overrides it, so a camera far from the drone would
+    // leave the drone's sounds out of earshot.
     void LogFirstShot(SDK::ACrCharacterPlayerBase* character, SDK::USceneComponent* anchor)
     {
         if (g_fx.loggedFirstShot)
@@ -173,9 +190,12 @@ namespace
 
         SDK::APlayerCameraManager* camera = SDK::UGameplayStatics::GetPlayerCameraManager(character, 0);
         const double listener = camera ? camera->GetCameraLocation().GetDistanceTo(anchor->K2_GetComponentLocation()) : -1.0;
-        LOG_INFO("DroneLaser: effects -- beam %s, laser loop %s, ore loop %s; camera %.0f cm from the drone camera",
-            g_fx.beam.Get() ? "on" : "not loaded",
-            g_fx.laserLoop.Get() ? "on" : "not loaded",
+        SDK::UNiagaraComponent* beam = g_fx.beam.Get();
+        SDK::UAudioComponent*   loop = g_fx.laserLoop.Get();
+        LOG_INFO("DroneLaser: effects -- beam %s (active %d, visible %d), laser loop %s (playing %d), ore loop %s; "
+                 "camera %.0f cm from the drone camera",
+            beam ? "on" : "not loaded", beam ? beam->IsActive() : 0, beam ? beam->IsVisible() : 0,
+            loop ? "on" : "not loaded", loop ? loop->IsPlaying() : 0,
             Sound(g_assets.ore) ? "found" : "not loaded",
             listener);
     }
@@ -200,6 +220,7 @@ namespace DroneLaserFx
 
         if (!g_fx.firing)
         {
+            ForgetAssets();
             g_fx.firing = true;
             g_fx.anchor.Set(anchor);
             PlayAtAnchor(Sound(g_assets.start), anchor);
@@ -257,6 +278,7 @@ namespace DroneLaserFx
 
     void PlayReject(SDK::ACrCharacterPlayerBase* character)
     {
+        ForgetAssets();
         PlayAtAnchor(Sound(g_assets.reject), Anchor(character));
     }
 
