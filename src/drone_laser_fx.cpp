@@ -28,23 +28,24 @@ namespace
     // The mining tool's own assets (BP_MiningToolActor's beam component, its
     // audio components' sounds and its overheat refusal sound). They are not
     // in memory while the drone holds the building tool, so they are loaded
-    // by path.
+    // by path. Nothing keeps them loaded between firings, so each firing
+    // looks them up afresh.
     struct Assets
     {
         NamedObject beam        { "NS_HarvesterResized",
-            L"/Game/Chimera/Weapons/MiningTool/VFX/NS_HarvesterResized.NS_HarvesterResized" };
+            "/Game/Chimera/Weapons/MiningTool/VFX/NS_HarvesterResized.NS_HarvesterResized" };
         NamedObject start       { "S_Harvester_Rotate_Default_Start_Cue",
-            L"/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Rotate_Default_Start_Cue.S_Harvester_Rotate_Default_Start_Cue" };
+            "/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Rotate_Default_Start_Cue.S_Harvester_Rotate_Default_Start_Cue" };
         NamedObject loop        { "S_Harvester_Rotate_Default_Loop_Cue",
-            L"/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Rotate_Default_Loop_Cue.S_Harvester_Rotate_Default_Loop_Cue" };
+            "/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Rotate_Default_Loop_Cue.S_Harvester_Rotate_Default_Loop_Cue" };
         NamedObject finished    { "S_Harvester_Rotate_Default_Finished_Cue",
-            L"/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Rotate_Default_Finished_Cue.S_Harvester_Rotate_Default_Finished_Cue" };
+            "/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Rotate_Default_Finished_Cue.S_Harvester_Rotate_Default_Finished_Cue" };
         NamedObject ore         { "S_Wpn_Hv_Stones_Loop_01_Cue",
-            L"/Game/Chimera/Audio/Weapons/Harvester/S_Wpn_Hv_Stones_Loop_01_Cue.S_Wpn_Hv_Stones_Loop_01_Cue" };
+            "/Game/Chimera/Audio/Weapons/Harvester/S_Wpn_Hv_Stones_Loop_01_Cue.S_Wpn_Hv_Stones_Loop_01_Cue" };
         NamedObject reject      { "S_Harvester_Trigger",
-            L"/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Trigger.S_Harvester_Trigger" };
+            "/Game/Chimera/Audio/Weapons/Harvester/S_Harvester_Trigger.S_Harvester_Trigger" };
         NamedObject attenuation { "ATT_MiningLaser",
-            L"/Game/Chimera/Weapons/MiningTool/ATT_MiningLaser.ATT_MiningLaser" };
+            "/Game/Chimera/Weapons/MiningTool/ATT_MiningLaser.ATT_MiningLaser" };
     };
 
     // The beam's parameters, under the names the tool's blueprint sets them
@@ -73,6 +74,13 @@ namespace
     Assets     g_assets;
     ParamNames g_names;
     FxState    g_fx;
+
+    void ForgetAssets()
+    {
+        for (NamedObject* slot : { &g_assets.beam, &g_assets.start, &g_assets.loop, &g_assets.finished,
+                                   &g_assets.ore, &g_assets.reject, &g_assets.attenuation })
+            slot->Forget();
+    }
 
     uint64_t NowMs()
     {
@@ -212,6 +220,7 @@ namespace DroneLaserFx
 
         if (!g_fx.firing)
         {
+            ForgetAssets();
             g_fx.firing = true;
             g_fx.anchor.Set(anchor);
             PlayAtAnchor(Sound(g_assets.start), anchor);
@@ -269,6 +278,7 @@ namespace DroneLaserFx
 
     void PlayReject(SDK::ACrCharacterPlayerBase* character)
     {
+        ForgetAssets();
         PlayAtAnchor(Sound(g_assets.reject), Anchor(character));
     }
 
