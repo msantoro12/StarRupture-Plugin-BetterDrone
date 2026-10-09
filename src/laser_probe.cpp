@@ -1,5 +1,6 @@
 #include "laser_probe.h"
 #include "drone_interact.h"
+#include "mining_natives.h"
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
 #include <Chimera_classes.hpp>
@@ -59,17 +60,14 @@ namespace
     // actor (lea rbx, [rcx - 0x2A8] at 0x147752151 and 0x1477628D9).
     constexpr size_t kMassInterfaceOffset = 0x2A8;
 
-    constexpr const char* kMiningToolCdoName = "Default__BP_MiningTool_C";
+    using MiningNatives::kMiningToolCdoName;
 
     // ---- AOB patterns (Game SDK 659656c, shipping exe md5 be7be1ac...) ---------
     // Each matches exactly once in the image. They are only resolved here and
     // installed when the probe is switched on, so a miss disables that one hook.
-    constexpr const char* kPatMineActor =   // UCrMiningComponent::MineResourceRequest(AActor*, FName, float, float, bool)
-        "4C 89 44 24 18 55 56 41 55 41 57 48 81 EC A8 00 00 00 4C 8B A9 ?? ?? ?? ?? 4D 8B F8 0F 29 B4 24 ?? ?? ?? ?? "
-        "0F 28 F3 48 8B EA 48 8B F1";
-    constexpr const char* kPatMineIsm =     // UCrMiningComponent::MineResourceRequest(UPhysicalMaterial*, float, float)
-        "40 53 56 41 56 48 83 EC 60 4C 8B B1 ?? ?? ?? ?? 48 8B F2 0F 29 74 24 50 0F 28 F2 44 0F 29 44 24 30 "
-        "44 0F 28 C3 48 8B D9 4D 85 F6";
+    // The two mining requests' patterns are shared with the drone laser.
+    using MiningNatives::kPatMineActor;
+    using MiningNatives::kPatMineIsm;
     constexpr const char* kPatMassMine =    // ACrOreMassBaseActor::MineResourceRequest(float, float, AActor*)
         "48 89 5C 24 18 55 56 57 48 83 EC 60 0F 29 74 24 50 48 8D 99 ?? ?? ?? ?? 0F 29 7C 24 40 48 8B CB "
         "49 8B F1 0F 28 FA 0F 28 F1 E8 ?? ?? ?? ??";
@@ -94,8 +92,8 @@ namespace
         kHkCount
     };
 
-    using MineActorFn   = void(__fastcall*)(void* comp, void* actor, uint64_t socket, float damage, float rpm, bool weakSpot);
-    using MineIsmFn     = void(__fastcall*)(void* comp, void* physMat, float damage, float rpm);
+    using MiningNatives::MineActorFn;
+    using MiningNatives::MineIsmFn;
     using MassMineFn    = void(__fastcall*)(void* iface, float damage, float rpm, void* miner);
     using MassGranteeFn = void(__fastcall*)(void* iface, void* grantee);
     using StoppedFn     = void(__fastcall*)(void* comp, void* actor);
