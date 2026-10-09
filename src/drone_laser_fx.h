@@ -24,8 +24,7 @@ namespace DroneLaserFx
     struct Shot
     {
         SDK::FVector hit;       // where the beam ends, world space
-        bool         onOre;     // the beam is on ore the laser takes
-        bool         mining;    // a mining request took: the grinding loop plays
+        bool         mining;    // a mining request took: the ore look and the grinding loop
         float        heat;      // 0..1
     };
 
@@ -41,7 +40,9 @@ namespace DroneLaserFx
     // Game thread only. The tool's refusal click, for a press while overheated.
     void PlayReject(SDK::ACrCharacterPlayerBase* character);
 
-    // Plugin shutdown. The components are destroyed on the game thread only;
-    // anywhere else they are left to the engine.
+    // Plugin shutdown. The components are destroyed on the game thread only.
+    // Anywhere else (a stock loader older than 1.22 reloading from the render
+    // thread) they cannot be touched, and a beam and loops playing at that
+    // moment carry on until the drone camera goes.
     void Shutdown(bool onGameThread);
 }

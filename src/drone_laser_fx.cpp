@@ -5,7 +5,8 @@
 #include <Chimera_classes.hpp>
 #include <Engine_classes.hpp>
 #include <Niagara_classes.hpp>
-#include <cmath>
+#include <chrono>
+#include <cstdint>
 
 namespace
 {
@@ -19,6 +20,10 @@ namespace
 
     // How long a loop fades when it stops.
     constexpr float kLoopFadeSeconds = 0.1f;
+
+    // A released beam winds down and destroys itself; one still there after
+    // this long is destroyed outright.
+    constexpr uint64_t kBeamWindDownMs = 3000;
 
     // The mining tool's own assets (BP_MiningToolActor's beam component, its
     // audio components' sounds and its overheat refusal sound). They are hard
@@ -51,6 +56,7 @@ namespace
         ObjectRef<SDK::USceneComponent>   anchor;
         ObjectRef<SDK::UNiagaraComponent> beam;
         ObjectRef<SDK::UNiagaraComponent> fadingBeam;   // deactivated, finishing its particles
+        uint64_t                          fadingSinceMs = 0;
         ObjectRef<SDK::UAudioComponent>   laserLoop;
         ObjectRef<SDK::UAudioComponent>   oreLoop;
         bool                              loggedFirstShot = false;
@@ -59,6 +65,12 @@ namespace
     Assets     g_assets;
     ParamNames g_names;
     FxState    g_fx;
+
+    uint64_t NowMs()
+    {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
 
     void BuildNames()
     {
@@ -139,19 +151,13 @@ namespace
         return beam;
     }
 
-    double Distance(const SDK::FVector& a, const SDK::FVector& b)
-    {
-        const double dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
-        return std::sqrt(dx * dx + dy * dy + dz * dz);
-    }
-
     void DriveBeam(SDK::UNiagaraComponent* beam, const DroneLaserFx::Shot& shot)
     {
         const SDK::FVector local = SDK::UKismetMathLibrary::InverseTransformLocation(beam->K2_GetComponentToWorld(), shot.hit);
         beam->SetVariableVec3(g_names.hitLocation, local);
-        beam->SetVariableFloat(g_names.hitDistance, static_cast<float>(Distance(beam->K2_GetComponentLocation(), shot.hit)));
+        beam->SetVariableFloat(g_names.hitDistance, static_cast<float>(beam->K2_GetComponentLocation().GetDistanceTo(shot.hit)));
         beam->SetVariableBool(g_names.active, true);
-        beam->SetVariableBool(g_names.aiming, shot.onOre);
+        beam->SetVariableBool(g_names.aiming, shot.mining);
         beam->SetVariableFloat(g_names.heat, shot.heat);
         beam->SetVariableBool(g_names.cooling, false);
     }
@@ -166,7 +172,7 @@ namespace
         g_fx.loggedFirstShot = true;
 
         SDK::APlayerCameraManager* camera = SDK::UGameplayStatics::GetPlayerCameraManager(character, 0);
-        const double listener = camera ? Distance(camera->GetCameraLocation(), anchor->K2_GetComponentLocation()) : -1.0;
+        const double listener = camera ? camera->GetCameraLocation().GetDistanceTo(anchor->K2_GetComponentLocation()) : -1.0;
         LOG_INFO("DroneLaser: effects -- beam %s, laser loop %s, ore loop %s; camera %.0f cm from the drone camera",
             g_fx.beam.Get() ? "on" : "not loaded",
             g_fx.laserLoop.Get() ? "on" : "not loaded",
@@ -217,6 +223,12 @@ namespace DroneLaserFx
 
     void Stop()
     {
+        if (g_fx.fadingSinceMs && NowMs() - g_fx.fadingSinceMs > kBeamWindDownMs)
+        {
+            Destroy(g_fx.fadingBeam);
+            g_fx.fadingSinceMs = 0;
+        }
+
         FadeOut(g_fx.laserLoop);
         FadeOut(g_fx.oreLoop);
 
@@ -230,6 +242,7 @@ namespace DroneLaserFx
             beam->SetAutoDestroy(true);
             beam->Deactivate();
             g_fx.fadingBeam.Set(beam);
+            g_fx.fadingSinceMs = NowMs();
         }
         g_fx.beam.Reset();
 

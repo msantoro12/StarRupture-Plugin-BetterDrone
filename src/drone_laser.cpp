@@ -549,11 +549,12 @@ namespace
 
     // The cooling numbers from the passive cooling ability's defaults, read
     // as each firing starts so a change (BetterCheats' row) is picked up.
-    // Anything out of reason keeps the stock value.
+    // Anything out of reason keeps the stock value. Checked against the
+    // native base class, as the tool actor's defaults are.
     void ReadCoolingNumbers()
     {
         auto* cooling = static_cast<SDK::UGA_MiningToolPassiveCooling_C*>(
-            g_s.coolingAbility.Resolve(SDK::UGA_MiningToolPassiveCooling_C::StaticClass()));
+            g_s.coolingAbility.Resolve(SDK::UCrGameplayAbility::StaticClass()));
         if (!cooling)
             return;
 
@@ -809,7 +810,6 @@ namespace
         frame.character    = character;
         frame.firing       = true;
         frame.shot.hit     = aim.point;
-        frame.shot.onOre   = aim.kind != OreKind::None;
         frame.shot.mining  = g_s.mining;
     }
 }
@@ -866,7 +866,8 @@ void ShutdownDroneLaser(IPluginSelf* self)
 
     // Shutdown also runs at process exit and, on older loaders, from the
     // render thread. Game objects are only touched from the game thread;
-    // anywhere else the stop is left to the game.
+    // anywhere else mining, beam and loops are left as they are (see
+    // DroneLaserFx::Shutdown).
     const bool onGameThread = GetCurrentThreadId() == g_gameThreadId.load(std::memory_order_relaxed);
     DroneLaserFx::Shutdown(onGameThread);
     ShutdownDroneHeatDisplay(self);
