@@ -405,20 +405,7 @@ namespace
         s.clip[2]   = static_cast<float>(canvas.topLeft[0] + canvas.absSize[0]);
         s.clip[3]   = static_cast<float>(canvas.topLeft[1] + canvas.absSize[1]);
 
-        float linear[3];
-        if (ReadPlayerMarkerColour(settings, linear))
-        {
-            s.colour = ToImGuiColour(linear);
-        }
-        else
-        {
-            s.colour = kFallbackColour;
-            if (!g_loggedColourFallback)
-            {
-                g_loggedColourFallback = true;
-                LOG_INFO("DroneMapMarker: the game's player marker colour is not available, using the default cyan");
-            }
-        }
+        s.colour    = PlayerMarkerColour();
         Publish(s);
     }
 
@@ -436,6 +423,21 @@ namespace
             return false;
         }
     }
+}
+
+unsigned int PlayerMarkerColour()
+{
+    float linear[3];
+    SDK::UCrMapMenuDevSettings* settings = SDK::UCrMapMenuDevSettings::GetDefaultObj();
+    if (settings && ReadPlayerMarkerColour(settings, linear))
+        return ToImGuiColour(linear);
+
+    if (!g_loggedColourFallback)
+    {
+        g_loggedColourFallback = true;
+        LOG_INFO("DroneMapMarker: the game's player marker colour is not available, using the default cyan");
+    }
+    return kFallbackColour;
 }
 
 void InitDroneMapMarker(IPluginSelf* self)

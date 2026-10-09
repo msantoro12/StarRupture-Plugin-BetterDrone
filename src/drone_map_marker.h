@@ -17,3 +17,8 @@ void ShutdownDroneMapMarker(IPluginSelf* self);
 
 // Game thread only, every engine tick.
 void TickDroneMapMarker(float deltaSeconds);
+
+// The colour of the local player's arrow on the map, as an ImGui colour, or
+// the arrow's usual cyan while the game's colour asset is not loaded. Game
+// thread only.
+unsigned int PlayerMarkerColour();
