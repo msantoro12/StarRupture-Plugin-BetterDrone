@@ -1,24 +1,28 @@
 #pragma once
 #include "object_ref.h"
 #include "plugin_helpers.h"
+#include <Engine_classes.hpp>
 #include <plugin_interface.h>
 #include <chrono>
 #include <cstdint>
 
 // An object found by name and kept as an ObjectRef: a class default object or
-// a loaded asset. A miss is looked for again every kRetryMs at the earliest,
-// since the lookup is a GObjects scan and the object may not be loaded yet.
-// Game thread only.
+// an asset. An asset given with its path is loaded from it if it is not in
+// memory, since the assets the game loads with a tool are not there while
+// another tool is held. A miss is looked for again every kRetryMs at the
+// earliest, since the lookup is a GObjects scan or a load. Game thread only.
 struct NamedObject
 {
     static constexpr uint64_t kRetryMs = 5000;
 
     const char*             name;
+    const wchar_t*          path = nullptr;  // "/Game/Dir/Asset.Asset", for an asset
     ObjectRef<SDK::UObject> ref;
     uint64_t                nextTryMs  = 0;
     bool                    missLogged = false;
 
-    explicit NamedObject(const char* objectName) : name(objectName) {}
+    explicit NamedObject(const char* objectName, const wchar_t* assetPath = nullptr)
+        : name(objectName), path(assetPath) {}
 
     // The object, or null while it is not found. cls is what it must be.
     SDK::UObject* Resolve(const SDK::UClass* cls)
@@ -32,12 +36,24 @@ struct NamedObject
             return nullptr;
         nextTryMs = now + kRetryMs;
 
-        IPluginHooks* hooks = GetSelf() ? GetSelf()->hooks : nullptr;
-        IPluginObjectWalker* walker = hooks ? hooks->ObjectWalker : nullptr;
-        if (!walker || !walker->IsReady() || !cls)
+        if (!cls)
             return nullptr;
 
-        auto* object = static_cast<SDK::UObject*>(walker->FindFirstObjectByName(name));
+        SDK::UObject* object = nullptr;
+        if (path)
+        {
+            object = SDK::UKismetSystemLibrary::LoadAsset_Blocking(SDK::UKismetSystemLibrary::Conv_SoftObjPathToSoftObjRef(
+                SDK::UKismetSystemLibrary::MakeSoftObjectPath(SDK::FString(path))));
+        }
+        else
+        {
+            IPluginHooks* hooks = GetSelf() ? GetSelf()->hooks : nullptr;
+            IPluginObjectWalker* walker = hooks ? hooks->ObjectWalker : nullptr;
+            if (!walker || !walker->IsReady())
+                return nullptr;
+            object = static_cast<SDK::UObject*>(walker->FindFirstObjectByName(name));
+        }
+
         if (!object || !object->IsA(cls))
         {
             if (!missLogged)
