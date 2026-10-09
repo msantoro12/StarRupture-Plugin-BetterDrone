@@ -7,7 +7,7 @@
 // player's inventory the way stock mining's does.
 //
 // What it mines: actor ore (meteor ores and their chunks) and infinite ore
-// veins. Mass ore is left alone. It never places, deconstructs or highlights
+// veins. Mass ore and crops are left alone. It never places, deconstructs or highlights
 // anything: the key is a loader keybind, not a game input action, and the
 // trace is a plain line trace that does not go through the building tool.
 //

@@ -11,8 +11,10 @@
 #include <GameplayAbilities_classes.hpp>
 #include <BP_MiningToolActor_classes.hpp>
 #include <atomic>
+#include <climits>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 #include <windows.h>
 
 namespace
@@ -232,8 +234,11 @@ namespace
         if (!comp)
             return aim;
 
+        // Meteor ores and their chunks only: crops are ore actors too, and
+        // are left to the player.
         SDK::AActor* owner = comp->GetOwner();
-        if (owner && owner->IsA(SDK::ACrOreActor::StaticClass()))
+        if (owner && (owner->IsA(SDK::ACrMeteOreActor::StaticClass())
+                   || owner->IsA(SDK::ACrStandaloneMeteOreChunk::StaticClass())))
         {
             aim.kind = OreKind::Actor;
             aim.ore  = owner;
@@ -300,34 +305,134 @@ namespace
 
     // ---- the bag ---------------------------------------------------------------
 
-    // Whether the player's bag takes count of resource whole, the check the
-    // grant itself makes. A grant that does not fit is dropped on the ground
-    // by the game, as with the stock tool. Anything unknown (the native not
-    // found, no inventory, the item's defaults not created yet) counts as
-    // room, and the game's own handling applies.
-    bool BagHasRoom(SDK::ACrCharacterPlayerBase* character, SDK::UClass* resource, int32_t count)
+    // Items the game is about to put in the bag, summed per item.
+    struct Grant
     {
-        if (!g_addrGetAmountCanAdd || !resource || count <= 0)
+        SDK::UClass* resource;
+        int64_t      count;
+    };
+
+    void AddGrant(std::vector<Grant>& grants, SDK::UClass* resource, int64_t count)
+    {
+        if (!resource || count <= 0)
+            return;
+
+        for (Grant& grant : grants)
+        {
+            if (grant.resource == resource)
+            {
+                grant.count += count;
+                return;
+            }
+        }
+        grants.push_back({ resource, count });
+    }
+
+    // Whether the player's bag takes every grant whole. The game adds each
+    // grant all or nothing, behind the same space walk as GetAmountCanAdd,
+    // and drops what does not fit at the player's body. GetAmountCanAdd
+    // counts an item's room in its own part-filled stacks plus in every empty
+    // slot; the empty slots are shared, so what each item cannot put in its
+    // own stacks must fit the empty slots together. Anything unknown (the
+    // native not found, no inventory, an item's defaults not created yet)
+    // counts as room, and the game's own handling applies.
+    bool BagHasRoom(SDK::ACrCharacterPlayerBase* character, const std::vector<Grant>& grants)
+    {
+        if (!g_addrGetAmountCanAdd || grants.empty())
             return true;
 
         SDK::UCrInventoryComponent* inventory = character->BP_GetInventory();
-        SDK::UObject* item = resource->ClassDefaultObject;
-        if (!inventory || !item)
+        if (!inventory)
             return true;
 
-        return reinterpret_cast<GetAmountCanAddFn>(g_addrGetAmountCanAdd)(inventory, item, count) >= count;
+        int64_t emptySlots = 0;
+        for (int32_t i = 0; i < inventory->Slots.Num(); ++i)
+        {
+            const SDK::FGuid& id = inventory->Slots[i].ItemId.Handle;
+            if ((id.A | id.B | id.C | id.D) == 0)
+                ++emptySlots;
+        }
+
+        const auto amountCanAdd = reinterpret_cast<GetAmountCanAddFn>(g_addrGetAmountCanAdd);
+        int64_t slotsNeeded = 0;
+        for (const Grant& grant : grants)
+        {
+            auto* item = static_cast<SDK::UAuItemDataBase*>(grant.resource->ClassDefaultObject);
+            if (!item)
+                continue;
+
+            const int64_t stack     = item->MaxStack > 1 ? item->MaxStack : 1;
+            const int64_t room      = amountCanAdd(inventory, item, INT32_MAX);
+            const int64_t inStacks  = room - emptySlots * stack;
+            const int64_t remaining = grant.count - (inStacks > 0 ? inStacks : 0);
+            if (remaining > 0)
+                slotsNeeded += (remaining + stack - 1) / stack;
+        }
+        return slotsNeeded <= emptySlots;
     }
 
-    // An ore actor grants everything it holds in one go, when its damage
-    // threshold is reached, and is spent.
+    // What spending an ore actor grants. The ore gives everything it holds
+    // in one go when its damage threshold is reached. A meteor ore then also
+    // gives, for each of its weak spots, what a weak spot not yet mined
+    // holds, plus between InitMinCount and InitMaxCount of the weak spot's
+    // resource whether it was mined or not; the most is reserved. A spent
+    // ore grants nothing.
+    std::vector<Grant> OreGrants(SDK::AActor* ore)
+    {
+        std::vector<Grant> grants;
+        auto* oreActor = static_cast<SDK::ACrOreActor*>(ore);
+        if (oreActor->OreData.bIsDepleted || oreActor->OreData.CurrentResourceCount <= 0)
+            return grants;
+
+        AddGrant(grants, oreActor->Resource, oreActor->OreData.MaxResourceCount);
+
+        const auto& spots = oreActor->WeakSpotsDataContainer.Items;
+        for (int32_t i = 0; i < spots.Num(); ++i)
+        {
+            const SDK::FCrWeakSpotRuntimeData& spot = spots[i];
+            const int64_t held = spot.CurrentMiningHealth > 0.0f ? spot.ResourceCount : 0;
+            AddGrant(grants, spot.Resource, held + oreActor->InitMaxCount);
+        }
+        return grants;
+    }
+
     bool BagHasRoomForOre(SDK::ACrCharacterPlayerBase* character, SDK::AActor* ore)
     {
-        auto* oreActor = static_cast<SDK::ACrOreActor*>(ore);
-        return BagHasRoom(character, oreActor->Resource, oreActor->OreData.MaxResourceCount);
+        return BagHasRoom(character, OreGrants(ore));
     }
 
-    // A vein grants GrantingMomentResourceCount each time its threshold is
-    // reached, from the ore data the request copied into the component.
+    // A vein grants GrantingMomentResourceCount each time its damage
+    // threshold is reached.
+    bool BagHasRoomForVein(SDK::ACrCharacterPlayerBase* character, const SDK::FCrInfiniteOreData& data)
+    {
+        std::vector<Grant> grants;
+        AddGrant(grants, data.Resource, data.GrantingMomentResourceCount);
+        return BagHasRoom(character, grants);
+    }
+
+    // The ore data of a vein's physical material, as the ore subsystem maps
+    // it, for the check before the first request: that request can already
+    // grant. Null when the material is not a vein.
+    const SDK::FCrInfiniteOreData* VeinOreData(SDK::ACrCharacterPlayerBase* character, SDK::UPhysicalMaterial* material)
+    {
+        auto* ores = static_cast<SDK::UCrOreSubsystem*>(
+            SDK::USubsystemBlueprintLibrary::GetWorldSubsystem(character, SDK::UCrOreSubsystem::StaticClass()));
+        SDK::UCrInfiniteOrePhysMatData* mapping = ores ? ores->InfiniteOrePhysMatMappingData : nullptr;
+        if (!mapping)
+            return nullptr;
+
+        // Not const: the SDK's const TMap indexer does not compile.
+        auto& veins = mapping->PhysMatOreDataMap;
+        for (int32_t i = 0; i < veins.NumAllocated(); ++i)
+        {
+            if (veins.IsValidIndex(i) && veins[i].Key() == material)
+                return &veins[i].Value();
+        }
+        return nullptr;
+    }
+
+    // Whether the target being mined can still be granted into the bag. A
+    // vein's ore data is the copy the request made into the component.
     bool BagHasRoomForNextGrant(SDK::ACrCharacterPlayerBase* character, SDK::UCrMiningComponent* comp)
     {
         if (g_s.kind == OreKind::Actor)
@@ -336,8 +441,18 @@ namespace
             return !ore || BagHasRoomForOre(character, ore);
         }
 
-        const SDK::FCrInfiniteOreData& data = comp->CurrentlyMinedOre.InfiniteOreData;
-        return BagHasRoom(character, data.Resource, data.GrantingMomentResourceCount);
+        return BagHasRoomForVein(character, comp->CurrentlyMinedOre.InfiniteOreData);
+    }
+
+    // Whether a new target can be started: both kinds can grant on the
+    // request itself.
+    bool BagHasRoomToStart(SDK::ACrCharacterPlayerBase* character, const Aim& aim)
+    {
+        if (aim.kind == OreKind::Actor)
+            return BagHasRoomForOre(character, aim.ore);
+
+        const SDK::FCrInfiniteOreData* data = VeinOreData(character, aim.vein);
+        return !data || BagHasRoomForVein(character, *data);
     }
 
     // ---- stop and start -------------------------------------------------------
@@ -515,7 +630,7 @@ namespace
                 return;
             }
 
-            if (aim.kind == OreKind::Actor && !BagHasRoomForOre(character, aim.ore))
+            if (!BagHasRoomToStart(character, aim))
             {
                 StopAndLatch("inventory full");
                 return;
