@@ -109,7 +109,9 @@
     <ClCompile Include="drone_wave_patch.cpp" />
     <ClCompile Include="drone_map_marker.cpp" />
     <ClCompile Include="drone_laser.cpp" />
-    <ClCompile Include="laser_probe.cpp" />
+    <ClCompile Include="drone_laser_fx.cpp" />
+    <ClCompile Include="drone_heat_display.cpp" />
+    <ClCompile Include="overlay_widget.cpp" />
     <ClCompile Include="panel_settings.cpp" />
     <!-- SDK Basic.cpp provides GObjects / GetImageBase required by GetDefaultObj() -->
     <ClCompile Include="$(StarRuptureSDKSourceDir)Basic.cpp" />
@@ -119,6 +121,7 @@
     <ClCompile Include="$(StarRuptureSDKSourceDir)ChimeraUI_functions.cpp" />
     <ClCompile Include="$(StarRuptureSDKSourceDir)UMG_functions.cpp" />
     <ClCompile Include="$(StarRuptureSDKSourceDir)GameplayAbilities_functions.cpp" />
+    <ClCompile Include="$(StarRuptureSDKSourceDir)Niagara_functions.cpp" />
   </ItemGroup>
 
   <ItemGroup>
@@ -135,7 +138,11 @@
     <ClInclude Include="drone_map_marker.h" />
     <ClInclude Include="drone_marker_icon.h" />
     <ClInclude Include="drone_laser.h" />
-    <ClInclude Include="laser_probe.h" />
+    <ClInclude Include="drone_laser_fx.h" />
+    <ClInclude Include="drone_heat_ring.h" />
+    <ClInclude Include="drone_heat_display.h" />
+    <ClInclude Include="named_object.h" />
+    <ClInclude Include="overlay_widget.h" />
     <ClInclude Include="mining_natives.h" />
     <ClInclude Include="object_ref.h" />
     <ClInclude Include="panel_settings.h" />

@@ -17,9 +17,15 @@
 // Mining stops, through the same call the stock game makes when the mining
 // beam is let go, on every way out: the key released, the target changed,
 // lost or out of range, the drone left or recalled, the character dead, the
-// world gone, the drill overheated, the bag unable to take the next grant,
-// and plugin shutdown. A full bag or an overheated drill keeps the laser off
-// until the key is pressed again.
+// world gone, the drill or the laser overheated, the bag unable to take the
+// next grant, and plugin shutdown. A full bag or an overheated drill keeps
+// the laser off until the key is pressed again; an overheated laser keeps it
+// off until it has cooled.
+//
+// It looks, sounds and heats like the mining tool: the tool's beam and sound
+// cues (drone_laser_fx.h), and a heat count of the laser's own with the
+// tool's numbers, shown as a ring around the crosshair (drone_heat_ring.h).
+// The drill's own heat is read, not changed.
 //
 // Game thread only: the key callback only stores an atomic, and every
 // UObject is reached from the tick. Nothing is kept across ticks but
@@ -33,8 +39,8 @@ void ResolveDroneLaser(IPluginSelf* self, IPluginHookScanner* scanner);
 
 void InitDroneLaser(IPluginSelf* self);
 
-// Stops any mining in progress (game thread only; elsewhere it logs and
-// leaves the component alone) and unregisters the key.
+// Stops any mining, beam and sound in progress (game thread only; elsewhere
+// it logs and leaves them to the game) and unregisters the key and the ring.
 void ShutdownDroneLaser(IPluginSelf* self);
 
 // Re-registers the key after the loader's settings page changed it.

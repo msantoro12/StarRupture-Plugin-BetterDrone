@@ -1,6 +1,7 @@
 #include "drone_map_marker.h"
 #include "drone_interact.h"
 #include "drone_marker_icon.h"
+#include "overlay_widget.h"
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
 #include <Chimera_classes.hpp>
@@ -56,8 +57,7 @@ namespace
     std::mutex g_lock;
     Snapshot   g_snapshot = {};
 
-    std::atomic<WidgetHandle> g_widget{ nullptr };
-    bool g_widgetShown = false;   // tick only
+    OverlayWidget g_overlay;
 
     // Tick only. A marker that agreed last tick is tried first. Handle numbers,
     // not pointers: the widget is looked up again each tick.
@@ -66,16 +66,6 @@ namespace
     uint64_t g_lastLogMs = 0;
     bool     g_failed    = false;
     bool     g_loggedColourFallback = false;
-
-    // A transparent window the draw list rides on: no title, no input, no
-    // background. The widget is shown only while there is something to draw.
-    constexpr int kWindowFlagAlwaysAutoResize = 1 << 6;
-    PluginWindowHints g_hints = {
-        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0,
-        PluginWindowFlags_NoTitleBar | PluginWindowFlags_NoResize | PluginWindowFlags_NoMove |
-        PluginWindowFlags_NoScrollbar | PluginWindowFlags_NoBackground | PluginWindowFlags_NoSavedSettings |
-        PluginWindowFlags_NoMouseInputs | kWindowFlagAlwaysAutoResize
-    };
 
     // ---- render thread --------------------------------------------------------
 
@@ -322,16 +312,7 @@ namespace
             g_snapshot = snapshot;
         }
 
-        if (g_widgetShown == snapshot.valid)
-            return;
-
-        WidgetHandle widget = g_widget.load();
-        IPluginSelf* self   = GetSelf();
-        if (widget && self && self->hooks->UI)
-        {
-            self->hooks->UI->SetWidgetVisible(widget, snapshot.valid);
-            g_widgetShown = snapshot.valid;
-        }
+        g_overlay.SetShown(snapshot.valid);
     }
 
     void Hide()
@@ -405,20 +386,7 @@ namespace
         s.clip[2]   = static_cast<float>(canvas.topLeft[0] + canvas.absSize[0]);
         s.clip[3]   = static_cast<float>(canvas.topLeft[1] + canvas.absSize[1]);
 
-        float linear[3];
-        if (ReadPlayerMarkerColour(settings, linear))
-        {
-            s.colour = ToImGuiColour(linear);
-        }
-        else
-        {
-            s.colour = kFallbackColour;
-            if (!g_loggedColourFallback)
-            {
-                g_loggedColourFallback = true;
-                LOG_INFO("DroneMapMarker: the game's player marker colour is not available, using the default cyan");
-            }
-        }
+        s.colour    = PlayerMarkerColour();
         Publish(s);
     }
 
@@ -438,21 +406,28 @@ namespace
     }
 }
 
+unsigned int PlayerMarkerColour()
+{
+    float linear[3];
+    SDK::UCrMapMenuDevSettings* settings = SDK::UCrMapMenuDevSettings::GetDefaultObj();
+    if (settings && ReadPlayerMarkerColour(settings, linear))
+        return ToImGuiColour(linear);
+
+    if (!g_loggedColourFallback)
+    {
+        g_loggedColourFallback = true;
+        LOG_INFO("DroneMapMarker: the game's player marker colour is not available, using the default cyan");
+    }
+    return kFallbackColour;
+}
+
 void InitDroneMapMarker(IPluginSelf* self)
 {
     if (!self || !self->hooks || !self->hooks->UI)
         return;
 
-    static const PluginWidgetDesc desc = { "BetterDrone Map Marker", &RenderMarker, &g_hints };
-    WidgetHandle widget = self->hooks->UI->RegisterWidget(&desc);
-    if (!widget)
-    {
+    if (!g_overlay.Register(self, "BetterDrone Map Marker", &RenderMarker))
         LOG_WARN("DroneMapMarker: the loader would not register the overlay widget, no marker will show.");
-        return;
-    }
-
-    self->hooks->UI->SetWidgetVisible(widget, false);
-    g_widget.store(widget);
 }
 
 void ShutdownDroneMapMarker(IPluginSelf* self)
@@ -463,18 +438,12 @@ void ShutdownDroneMapMarker(IPluginSelf* self)
         g_snapshot = Snapshot{};
     }
 
-    WidgetHandle widget = g_widget.exchange(nullptr);
-    if (widget && self && self->hooks->UI)
-    {
-        self->hooks->UI->SetWidgetVisible(widget, false);
-        self->hooks->UI->UnregisterWidget(widget);
-    }
-
+    g_overlay.Unregister(self);
 }
 
 void TickDroneMapMarker(float)
 {
-    if (g_failed || !g_widget.load())
+    if (g_failed || !g_overlay.IsRegistered())
         return;
 
     // Fail closed: a fault while reading the map stops the marker for the rest
