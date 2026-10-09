@@ -400,7 +400,8 @@ namespace
             g_s.toolData.Resolve(SDK::UCrWeaponItemDataBase::StaticClass()));
         SDK::UCrWeaponComponent*    weapons    = character->WeaponSystem;
         SDK::UCrWeaponAttributeSet* attributes = character->WeaponAttributes;
-        if (!tool || !weapons || !attributes || weapons->LastEquippedWeaponData != tool)
+        if (!tool || !weapons || !attributes || weapons->LastEquippedUnarmed
+            || weapons->EquippedWeapon.ItemDataLoaded != tool)
             return;
 
         const float mod = attributes->FireRateModMultiplier.CurrentValue;
