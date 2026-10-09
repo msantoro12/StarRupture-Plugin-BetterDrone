@@ -109,7 +109,6 @@
     <ClCompile Include="drone_wave_patch.cpp" />
     <ClCompile Include="drone_map_marker.cpp" />
     <ClCompile Include="drone_laser.cpp" />
-    <ClCompile Include="laser_probe.cpp" />
     <ClCompile Include="panel_settings.cpp" />
     <!-- SDK Basic.cpp provides GObjects / GetImageBase required by GetDefaultObj() -->
     <ClCompile Include="$(StarRuptureSDKSourceDir)Basic.cpp" />
@@ -135,7 +134,6 @@
     <ClInclude Include="drone_map_marker.h" />
     <ClInclude Include="drone_marker_icon.h" />
     <ClInclude Include="drone_laser.h" />
-    <ClInclude Include="laser_probe.h" />
     <ClInclude Include="mining_natives.h" />
     <ClInclude Include="object_ref.h" />
     <ClInclude Include="panel_settings.h" />
