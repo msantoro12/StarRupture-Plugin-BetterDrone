@@ -57,30 +57,6 @@ namespace
     bool g_boostWasActive = false;
     bool g_loggedInstanceReport = false;
 
-    // The text after the last '+' in a combo string ("Shift+K" -> "K"),
-    // or the whole string when there's no modifier prefix.
-    void ExtractBaseKey(const char* combo, char* outBuf, size_t outSize)
-    {
-        const char* base = combo ? combo : "";
-        const char* lastPlus = std::strrchr(base, '+');
-        if (lastPlus)
-            base = lastPlus + 1;
-
-        snprintf(outBuf, outSize, "%s", base);
-    }
-
-    // GetAsyncKeyState is global -- don't boost on a Shift held in another window.
-    bool GameHasFocus()
-    {
-        HWND fg = GetForegroundWindow();
-        if (!fg)
-            return false;
-
-        DWORD fgProcessId = 0;
-        GetWindowThreadProcessId(fg, &fgProcessId);
-        return fgProcessId == GetCurrentProcessId();
-    }
-
     void OnBoostKeyPressed(EModKey, EModKeyEvent event)
     {
         const bool held = (event == EModKeyEvent::Pressed);

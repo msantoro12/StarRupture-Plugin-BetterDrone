@@ -1,5 +1,6 @@
 #include "drone_key_vk.h"
 #include <windows.h>
+#include <cstdio>
 #include <cstring>
 
 int KeyNameToVk(const char* name)
@@ -30,4 +31,25 @@ int KeyNameToVk(const char* name)
             return entry.vk;
 
     return 0;
+}
+
+void ExtractBaseKey(const char* combo, char* outBuf, size_t outSize)
+{
+    const char* base = combo ? combo : "";
+    const char* lastPlus = std::strrchr(base, '+');
+    if (lastPlus)
+        base = lastPlus + 1;
+
+    snprintf(outBuf, outSize, "%s", base);
+}
+
+bool GameHasFocus()
+{
+    HWND fg = GetForegroundWindow();
+    if (!fg)
+        return false;
+
+    DWORD fgProcessId = 0;
+    GetWindowThreadProcessId(fg, &fgProcessId);
+    return fgProcessId == GetCurrentProcessId();
 }
