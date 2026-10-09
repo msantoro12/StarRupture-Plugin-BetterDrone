@@ -29,7 +29,7 @@ The game's map key does nothing while the drone is out. With this plugin, pressi
 
 ### Mining from the drone
 
-Hold the mining laser key (default **F**, `Mining Laser Key` under `[Controls]`) while flying to mine the ore under the crosshair: meteor ores, their chunks and infinite ore veins, within the mining tool's range and with its damage and rate. The yield goes to your inventory. Mining stops when you let go, when the target changes or leaves range, and when the drone is recalled; it also stops, until you press the key again, when your inventory can't take the next grant or the drill is overheated. It never builds or deconstructs anything. Host and single player only.
+Hold the mining laser key (default **G**, `Mining Laser Key` under `[Controls]`) while flying to mine the ore under the crosshair: meteor ores, their chunks and infinite ore veins, within the mining tool's range and with its damage and rate. The yield goes to your inventory. Mining stops when you let go, when the target changes or leaves range, and when the drone is recalled; it also stops, until you press the key again, when your inventory can't take the next grant or the drill is overheated. It never builds or deconstructs anything. Host and single player only.
 
 ---
 
