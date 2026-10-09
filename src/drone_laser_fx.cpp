@@ -68,7 +68,6 @@ namespace
         uint64_t                          fadingSinceMs = 0;
         ObjectRef<SDK::UAudioComponent>   laserLoop;
         ObjectRef<SDK::UAudioComponent>   oreLoop;
-        bool                              loggedFirstShot = false;
     };
 
     Assets     g_assets;
@@ -177,28 +176,6 @@ namespace
         beam->SetVariableFloat(g_names.heat, shot.heat);
         beam->SetVariableBool(g_names.cooling, false);
     }
-
-    // Once per session: what was found, whether it shows and plays, and
-    // where the listener is. The audio listener sits on the player's camera
-    // unless the game overrides it, so a camera far from the drone would
-    // leave the drone's sounds out of earshot.
-    void LogFirstShot(SDK::ACrCharacterPlayerBase* character, SDK::USceneComponent* anchor)
-    {
-        if (g_fx.loggedFirstShot)
-            return;
-        g_fx.loggedFirstShot = true;
-
-        SDK::APlayerCameraManager* camera = SDK::UGameplayStatics::GetPlayerCameraManager(character, 0);
-        const double listener = camera ? camera->GetCameraLocation().GetDistanceTo(anchor->K2_GetComponentLocation()) : -1.0;
-        SDK::UNiagaraComponent* beam = g_fx.beam.Get();
-        SDK::UAudioComponent*   loop = g_fx.laserLoop.Get();
-        LOG_INFO("DroneLaser: effects -- beam %s (active %d, visible %d), laser loop %s (playing %d), ore loop %s; "
-                 "camera %.0f cm from the drone camera",
-            beam ? "on" : "not loaded", beam ? beam->IsActive() : 0, beam ? beam->IsVisible() : 0,
-            loop ? "on" : "not loaded", loop ? loop->IsPlaying() : 0,
-            Sound(g_assets.ore) ? "found" : "not loaded",
-            listener);
-    }
 }
 
 namespace DroneLaserFx
@@ -226,7 +203,6 @@ namespace DroneLaserFx
             PlayAtAnchor(Sound(g_assets.start), anchor);
             g_fx.laserLoop.Set(PlayAtAnchor(Sound(g_assets.loop), anchor));
             g_fx.beam.Set(SpawnBeam(anchor));
-            LogFirstShot(character, anchor);
         }
 
         if (SDK::UNiagaraComponent* beam = g_fx.beam.Get())
