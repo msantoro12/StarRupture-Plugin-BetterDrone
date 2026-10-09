@@ -149,8 +149,8 @@ namespace
 
     // Stands the character's root component at the drone's camera for as long
     // as it is in scope, then puts it back. Only the cached world translation
-    // is rewritten, so nothing outside the native call made inside the scope
-    // ever sees the move.
+    // is rewritten, and it is restored before the scope ends, so only the
+    // native calls made inside the scope see the move.
     class BodyAtDroneCamera
     {
     public:
@@ -194,11 +194,6 @@ namespace
             return;
         }
 
-        // The original bails out on IsBuildingDroneActive, and ranges every
-        // candidate against the character's root component. Hand it a character
-        // that is not in drone mode and is standing at the drone's camera, then
-        // put both back before anything else can observe them.
-
         // A second gate sits ahead of the drone one: DeconstructMode jumps
         // straight to ResetInteractableActor. The drone is summoned from the
         // building tool -- CanActivateDrone returns true outright when the
@@ -219,6 +214,10 @@ namespace
         auto*         controlState      = reinterpret_cast<uint8_t*>(pc) + k_pcPlayerControlState;
         const uint8_t savedControlState = *controlState;
 
+        // The original bails out on IsBuildingDroneActive, and ranges every
+        // candidate against the character's root component. Hand it a character
+        // that is not in drone mode and is standing at the drone's camera, then
+        // put both back before anything else can observe them.
         const SDK::EPlayerCharacterStatus savedStatus = character->Status;
         character->Status = SDK::EPlayerCharacterStatus::None;
 
@@ -253,16 +252,36 @@ namespace
         return g_origInteractCompleted(pc);
     }
 
-    // A wild plant ranges itself against the possessed pawn, which in drone
-    // mode is the parked body: ACrGatherableBaseActor::CanInteract refuses one
-    // more than GatherableCropSettings' GatherableInteractionDistanceThresholdInCm
-    // away. Targeting picks the plant with the body at the drone's camera, but
-    // the press and release handlers ask CanInteract again, so they need the
-    // body there too. Crops and every other target keep the path they had.
-    bool IsWildPlantTarget(SDK::ACrPlayerControllerBase* pc)
+    // A gatherable (wild plants, fruit, eggs) ranges itself against the
+    // possessed pawn, which in drone mode is the parked body:
+    // ACrGatherableBaseActor::CanInteract refuses one more than
+    // GatherableCropSettings' GatherableInteractionDistanceThresholdInCm away.
+    // Targeting picks it with the body at the drone's camera, but the press and
+    // release handlers ask CanInteract again, so they need the body there too.
+    // Crops and every other target keep the path they had.
+    bool IsGatherableTarget(SDK::ACrPlayerControllerBase* pc)
     {
         SDK::AActor* target = pc->CurrentInteractableActor;
         return target && target->IsA(SDK::ACrGatherableBaseActor::StaticClass());
+    }
+
+    // Game thread only. Keeps the per-press target line below to one a second.
+    uint64_t g_lastTargetLogMs = 0;
+
+    // What a press in the drone reached, so a target that does not respond can
+    // be told apart from one that was never selected.
+    void LogPressTarget(SDK::ACrPlayerControllerBase* pc, bool movedBody)
+    {
+        const uint64_t now = GetTickCount64();
+        if (now - g_lastTargetLogMs < 1000)
+            return;
+
+        g_lastTargetLogMs = now;
+
+        SDK::AActor* target = pc->CurrentInteractableActor;
+        LOG_INFO("DroneInteract: interact on %s%s",
+                 target ? target->Class->GetName().c_str() : "no target",
+                 movedBody ? ", ranged from the drone" : "");
     }
 
     // Mirrors UCrInputNativeInteract: press starts a held interaction, release
@@ -271,12 +290,19 @@ namespace
     void DispatchInteract(SDK::ACrPlayerControllerBase* pc, SDK::ACrCharacterPlayerBase* character,
                           bool press, bool release)
     {
+        // Only where the gather is granted: a client also asks the server,
+        // which checks the range again against the body it holds, refuses,
+        // and leaves the plant marked gathered on the client alone.
         std::optional<BodyAtDroneCamera> atDrone;
-        if (character->RootComponent && character->DroneCamera && IsWildPlantTarget(pc))
+        if (character->RootComponent && character->DroneCamera && IsGatherableTarget(pc) &&
+            SDK::UKismetSystemLibrary::IsServer(character))
             atDrone.emplace(character->RootComponent, character->DroneCamera);
 
         if (press)
+        {
+            LogPressTarget(pc, atDrone.has_value());
             reinterpret_cast<InteractVoid_t>(g_addrInteractStarted)(pc);
+        }
 
         if (release && !reinterpret_cast<InteractBool_t>(g_addrInteractCompleted)(pc))
             reinterpret_cast<InteractVoid_t>(g_addrInteract)(pc);
