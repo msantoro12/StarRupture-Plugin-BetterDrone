@@ -9,6 +9,7 @@
 #include <Engine_classes.hpp>
 #include <GameplayAbilities_classes.hpp>
 #include <atomic>
+#include <optional>
 #include <windows.h>
 
 namespace
@@ -146,6 +147,41 @@ namespace
         return false;
     }
 
+    // Stands the character's root component at the drone's camera for as long
+    // as it is in scope, then puts it back. Only the cached world translation
+    // is rewritten, so nothing outside the native call made inside the scope
+    // ever sees the move.
+    class BodyAtDroneCamera
+    {
+    public:
+        BodyAtDroneCamera(SDK::USceneComponent* root, const SDK::UCameraComponent* droneCam)
+            : m_translation(reinterpret_cast<double*>(
+                  reinterpret_cast<uint8_t*>(root) + k_componentToWorldTranslation))
+        {
+            const auto* camTranslation = reinterpret_cast<const double*>(
+                reinterpret_cast<const uint8_t*>(droneCam) + k_componentToWorldTranslation);
+
+            for (int i = 0; i < 3; ++i)
+            {
+                m_saved[i]       = m_translation[i];
+                m_translation[i] = camTranslation[i];
+            }
+        }
+
+        ~BodyAtDroneCamera()
+        {
+            for (int i = 0; i < 3; ++i)
+                m_translation[i] = m_saved[i];
+        }
+
+        BodyAtDroneCamera(const BodyAtDroneCamera&)            = delete;
+        BodyAtDroneCamera& operator=(const BodyAtDroneCamera&) = delete;
+
+    private:
+        double* m_translation;
+        double  m_saved[3] = {};
+    };
+
     void __fastcall Detour_OnInteractableTargetsChanged(void* pc, const void* newTargets)
     {
         SDK::ACrCharacterPlayerBase* character = DroneCharacter(static_cast<SDK::ACrPlayerControllerBase*>(pc));
@@ -162,10 +198,6 @@ namespace
         // candidate against the character's root component. Hand it a character
         // that is not in drone mode and is standing at the drone's camera, then
         // put both back before anything else can observe them.
-        auto*       rootTranslation = reinterpret_cast<double*>(
-            reinterpret_cast<uint8_t*>(root) + k_componentToWorldTranslation);
-        const auto* camTranslation  = reinterpret_cast<const double*>(
-            reinterpret_cast<const uint8_t*>(droneCam) + k_componentToWorldTranslation);
 
         // A second gate sits ahead of the drone one: DeconstructMode jumps
         // straight to ResetInteractableActor. The drone is summoned from the
@@ -188,23 +220,18 @@ namespace
         const uint8_t savedControlState = *controlState;
 
         const SDK::EPlayerCharacterStatus savedStatus = character->Status;
-        const double savedTranslation[3] = { rootTranslation[0], rootTranslation[1], rootTranslation[2] };
-
-        character->Status  = SDK::EPlayerCharacterStatus::None;
-        rootTranslation[0] = camTranslation[0];
-        rootTranslation[1] = camTranslation[1];
-        rootTranslation[2] = camTranslation[2];
+        character->Status = SDK::EPlayerCharacterStatus::None;
 
         if (savedControlState == k_controlStateDeconstructMode)
             *controlState = k_controlStateNormal;
 
-        g_origTargetsChanged(pc, newTargets);
+        {
+            const BodyAtDroneCamera atDrone(root, droneCam);
+            g_origTargetsChanged(pc, newTargets);
+        }
 
-        *controlState      = savedControlState;
-        rootTranslation[0] = savedTranslation[0];
-        rootTranslation[1] = savedTranslation[1];
-        rootTranslation[2] = savedTranslation[2];
-        character->Status  = savedStatus;
+        *controlState     = savedControlState;
+        character->Status = savedStatus;
     }
 
     void __fastcall Detour_NativeOnInputInteractStarted(void* pc)
@@ -226,11 +253,28 @@ namespace
         return g_origInteractCompleted(pc);
     }
 
+    // A wild plant ranges itself against the possessed pawn, which in drone
+    // mode is the parked body: ACrGatherableBaseActor::CanInteract refuses one
+    // more than GatherableCropSettings' GatherableInteractionDistanceThresholdInCm
+    // away. Targeting picks the plant with the body at the drone's camera, but
+    // the press and release handlers ask CanInteract again, so they need the
+    // body there too. Crops and every other target keep the path they had.
+    bool IsWildPlantTarget(SDK::ACrPlayerControllerBase* pc)
+    {
+        SDK::AActor* target = pc->CurrentInteractableActor;
+        return target && target->IsA(SDK::ACrGatherableBaseActor::StaticClass());
+    }
+
     // Mirrors UCrInputNativeInteract: press starts a held interaction, release
     // finishes it, and an interaction that never started falls through to the
     // instant one.
-    void DispatchInteract(SDK::ACrPlayerControllerBase* pc, bool press, bool release)
+    void DispatchInteract(SDK::ACrPlayerControllerBase* pc, SDK::ACrCharacterPlayerBase* character,
+                          bool press, bool release)
     {
+        std::optional<BodyAtDroneCamera> atDrone;
+        if (character->RootComponent && character->DroneCamera && IsWildPlantTarget(pc))
+            atDrone.emplace(character->RootComponent, character->DroneCamera);
+
         if (press)
             reinterpret_cast<InteractVoid_t>(g_addrInteractStarted)(pc);
 
@@ -290,7 +334,7 @@ namespace
         }
 
         g_lastGate = nullptr;
-        DispatchInteract(pc, press, release);
+        DispatchInteract(pc, character, press, release);
     }
 
     void OnInteractKey(EModKey, EModKeyEvent event)
