@@ -22,68 +22,104 @@ static HookHandle                 g_hook      = nullptr;
 static uintptr_t                  g_addr      = 0;
 
 // ACrCharacterPlayerBase::CheckIfInInterior
-// Called from the character's Tick with every component overlapping any of the
-// character's own components (AActor::GetOverlappingComponents), and reports a
-// change through ServerSetInInterior. The InInterior / InSafeInterior tags it
-// sets are what zero the wave's heat (Tick scales BlendTemperature by them).
-// DroneCameraColl is one of the character's components and flies with the
-// drone, so in drone mode the drone's surroundings count as the player's: the
-// drone parked in a shelter shields an exposed body, and the drone leaving a
-// shelter can expose a sheltered body. While the drone is out the check is
-// skipped, so the state stays what the body had when the drone launched; the
-// body is parked and does not move. On foot nothing changes.
+// Called from the character's Tick with a copy of every component overlapping
+// any of the character's own components (AActor::GetOverlappingComponents); it
+// sets the InInterior / InSafeInterior tags through ServerSetInInterior, and
+// Tick multiplies the wave's heat by "not in interior". DroneCameraColl is one
+// of the character's components and flies with the drone, so in drone mode the
+// drone's surroundings count as the player's: a drone parked in a shelter
+// shields an exposed body, and a drone leaving one can expose a sheltered body.
+// In drone mode the interior volumes only the drone's sphere touches are taken
+// out of the list before the original runs, so shelter is judged live at the
+// parked body. Everything the tags gate follows the body too, including the
+// stock rule that ends drone mode when the drone itself enters an interior.
+// On foot the call is passed through untouched.
 static constexpr const char* kCheckIfInInteriorPattern =
     "48 8B C4 48 89 50 10 48 89 48 08 48 83 EC ?? 48 89 58 18 48 89 68 F8 40 32 ED 48 89 70 F0 40 32 F6";
 
-typedef void(__fastcall* CheckIfInInterior_t)(void* thisPtr, const SDK::TArray<SDK::UPrimitiveComponent*>& overlaps);
+// The list arrives by value: the caller hands over its own copy and the
+// original frees it on the way out, so it is edited in place and always passed on.
+struct OverlapList
+{
+    SDK::UPrimitiveComponent** data;
+    int32_t                    num;
+    int32_t                    max;
+};
+
+typedef void(__fastcall* CheckIfInInterior_t)(void* thisPtr, OverlapList* overlaps);
 static CheckIfInInterior_t g_originalInterior = nullptr;
 static HookHandle          g_hookInterior     = nullptr;
 static uintptr_t           g_addrInterior     = 0;
 
-// Game thread only. What the drone-side overlaps would have reported, so the
-// log line fires on a change rather than every tick.
-static int      g_lastDroneSide = -1;
-static uint64_t g_lastLogMs     = 0;
+// Game thread only. The last state logged, so the line fires on a change
+// rather than every tick.
+static int      g_lastShelterLog = -1;
+static uint64_t g_lastShelterMs  = 0;
 
-static void LogHeldInterior(SDK::ACrCharacterPlayerBase* character,
-                            const SDK::TArray<SDK::UPrimitiveComponent*>& overlaps)
+static bool BodyOverlaps(SDK::ACrCharacterPlayerBase* character, SDK::UPrimitiveComponent* volume)
 {
-    bool interior = false;
-    bool safe     = false;
-    for (int32_t i = 0; i < overlaps.Num(); ++i)
-    {
-        SDK::UPrimitiveComponent* comp = overlaps[i];
-        if (!comp || !comp->IsA(SDK::UInteriorOverlapComponent::StaticClass()))
-            continue;
-
-        interior = true;
-        safe     = safe || static_cast<SDK::UInteriorOverlapComponent*>(comp)->bIsSafeInterior;
-    }
-
-    const int droneSide = (interior ? 1 : 0) | (safe ? 2 : 0);
-    const uint64_t now  = GetTickCount64();
-    if (droneSide == g_lastDroneSide || now - g_lastLogMs < 1000)
-        return;
-
-    g_lastDroneSide = droneSide;
-    g_lastLogMs     = now;
-    LOG_INFO("WaveShelter: drone out, body holds interior=%d safe=%d; drone-side overlaps say interior=%d safe=%d (ignored)",
-             character->IsInInterior() ? 1 : 0, character->IsInSafeInterior() ? 1 : 0,
-             interior ? 1 : 0, safe ? 1 : 0);
+    return (character->CapsuleComponent && character->CapsuleComponent->IsOverlappingComponent(volume)) ||
+           (character->Mesh && character->Mesh->IsOverlappingComponent(volume));
 }
 
-static void __fastcall Detour_CheckIfInInterior(void* thisPtr, const SDK::TArray<SDK::UPrimitiveComponent*>& overlaps)
+// Drops the interior volumes that only the drone's sphere touches. Returns how
+// many it dropped; bodyInterior / bodySafe describe what is left.
+static int DropDroneOnlyInteriors(SDK::ACrCharacterPlayerBase* character, OverlapList* overlaps,
+                                  bool& bodyInterior, bool& bodySafe)
+{
+    SDK::USphereComponent* droneSphere = character->DroneCameraColl;
+    int dropped = 0;
+    int kept    = 0;
+
+    for (int32_t i = 0; i < overlaps->num; ++i)
+    {
+        SDK::UPrimitiveComponent* comp = overlaps->data[i];
+        if (comp && comp->IsA(SDK::UInteriorOverlapComponent::StaticClass()))
+        {
+            if (droneSphere && droneSphere->IsOverlappingComponent(comp) && !BodyOverlaps(character, comp))
+            {
+                ++dropped;
+                continue;
+            }
+
+            bodyInterior = true;
+            bodySafe     = bodySafe || static_cast<SDK::UInteriorOverlapComponent*>(comp)->bIsSafeInterior;
+        }
+
+        overlaps->data[kept++] = comp;
+    }
+
+    overlaps->num = kept;
+    return dropped;
+}
+
+static void __fastcall Detour_CheckIfInInterior(void* thisPtr, OverlapList* overlaps)
 {
     auto* character = static_cast<SDK::ACrCharacterPlayerBase*>(thisPtr);
-    if (character && character->Status == SDK::EPlayerCharacterStatus::BuildingDrone)
+    if (!character || !overlaps || character->Status != SDK::EPlayerCharacterStatus::BuildingDrone)
     {
-        LogHeldInterior(character, overlaps);
+        g_lastShelterLog = -1;
+        g_originalInterior(thisPtr, overlaps);
         return;
     }
 
-    g_lastDroneSide = -1;
-    if (g_originalInterior)
-        g_originalInterior(thisPtr, overlaps);
+    bool bodyInterior = false;
+    bool bodySafe     = false;
+    const int dropped = DropDroneOnlyInteriors(character, overlaps, bodyInterior, bodySafe);
+
+    // What a wave test needs to see: whether the body counts as sheltered, and
+    // whether the drone was in a shelter the body is not.
+    const int state    = (bodyInterior ? 1 : 0) | (bodySafe ? 2 : 0) | (dropped ? 4 : 0);
+    const uint64_t now = GetTickCount64();
+    if (state != g_lastShelterLog && now - g_lastShelterMs >= 1000)
+    {
+        g_lastShelterLog = state;
+        g_lastShelterMs  = now;
+        LOG_INFO("WaveShelter: drone out, body interior=%d safe=%d, ignored %d shelter volume(s) only the drone touches",
+                 bodyInterior ? 1 : 0, bodySafe ? 1 : 0, dropped);
+    }
+
+    g_originalInterior(thisPtr, overlaps);
 }
 
 static bool __fastcall Detour_CanBuildingDroneBeActive(void* thisPtr)
@@ -126,7 +162,7 @@ static void InitShelterHook()
 {
     if (!g_addrInterior)
     {
-        LOG_WARN("WaveShelter: CheckIfInInterior unresolved — the drone still counts toward shelter");
+        LOG_WARN("WaveShelter: CheckIfInInterior unresolved — the drone still counts toward the player's shelter");
         return;
     }
 
@@ -188,7 +224,7 @@ void ShutdownWavePatch()
         GetSelf()->hooks->Hooks->Remove(g_hookInterior);
         g_hookInterior     = nullptr;
         g_originalInterior = nullptr;
-        g_lastDroneSide    = -1;
+        g_lastShelterLog   = -1;
         LOG_DEBUG("WaveShelter: hook removed");
     }
 }
