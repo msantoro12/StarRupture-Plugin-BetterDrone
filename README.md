@@ -1,6 +1,6 @@
 # BetterDrone — StarRupture Client Plugin
 
-Extends the building drone limits in [StarRupture](https://store.steampowered.com/app/1631270/StarRupture/) beyond their default values, and adds drone controls and tools: speed presets, a mining laser, a map marker and more <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>. Everything is configurable without touching game files.
+Extends the building drone limits in [StarRupture](https://store.steampowered.com/app/1631270/StarRupture/) beyond their default values, and adds drone controls and tools.
 
 **Target:** Game client only
 
@@ -8,97 +8,108 @@ Extends the building drone limits in [StarRupture](https://store.steampowered.co
 
 ## What It Does
 
-Patches the game's drone developer settings CDO at runtime to apply your configured values each session:
-
-| Setting | Description |
-|---|---|
-| Speed | Movement speed of the building drone (cm/s) |
-| Max Radius | Maximum horizontal operating range (cm) |
-| Max Height | Maximum vertical operating range (cm) |
-
-The warning thresholds (the visual indicators before hitting the limit) are automatically adjusted to 95% of the configured max values.
+Patches the game's drone developer settings CDO at runtime to apply your configured values each session: Speed (cm/s), Max Radius and Max Height (cm). The warning thresholds follow at 95% of the max values. Stock values return when the plugin unloads. `Always Allow Drone` lets you use the drone where it's normally blocked, including during wave events.
 
 ### The BetterDrone panel <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-The panel holds the drone's speed, boost, acceleration, deceleration, range and audio volumes, with built-in and saved presets for speed and for range (saved presets can be saved, renamed and deleted), and a choice of speed unit (km/h, mph or cm/s). Open it with the toggle key (default **F10**, `Toggle Key` under `[Controls]`) or with the **BETTER DRONE** row in the game's pause menu, just below OPTIONS. **Esc** or **Q** closes it. The row is added only when the ModLoader's game menu is available; the toggle key always works. The panel can only be used in a game session.
+Opens with **F10**, the **BETTER DRONE** row under OPTIONS in the pause menu, or the **BetterDrone** button under Plugin Tools on the loader's config page. **Esc** or **Q** closes it. Game sessions only.
 
-Boost speeds the drone up while the boost key is held (default: your game's Sprint key, `Boost Key` under `[Controls]`; multiplier 1x to 10x, default 2x; boosted speed is capped at the same 20000 cm/s maximum as the base speed). Acceleration and deceleration are never instant.
+<a href="images/panel.png"><img src="images/panel.png" width="480" alt="The BetterDrone panel"></a>
 
-### Speed presets from the keyboard <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
+- **Rows:** Drone Speed, Acceleration, Deceleration, Boost Multiplier, Max Radius, Max Height, and a collapsed Audio section (Master, Idle, Movement, Rotation, Station volume; Master sets the rest). Each has a slider, a number box (typed values clamp to the ranges below) and a reset arrow (default; the game's own value for speed, radius and height).
+- **Speed Display Unit:** **km/h** (default), **mph** or **cm/s** (1000 cm/s = 36 km/h = 22.4 mph). Sets the speed, acceleration (km/h/s, mph/s, cm/s²) and range (m, ft, cm) rows, and the toast.
+- **Saved presets:** Save (named for you), Rename, Delete (asks first), for speed and range. Built-in names are reserved. The dropdown and the hotkeys use the first 16 per group, A-Z. Names up to 63 characters.
 
-While the drone is out, **-** steps to the next slower speed preset and **=** to the next faster one (`Previous Preset Key` and `Next Preset Key` under `[Controls]`, default `Hyphen` and `Equals`). The presets are the panel's built-in speed presets (Stock, Better Construction, Agile Builder, Long Haul, Ludicrous Speed) and your saved speed presets. They are stepped in order of speed, slowest to fastest, and a saved preset that repeats another's values is skipped. Stepping stops at either end. If the speed sits on no preset because you used the sliders, a step goes to the nearest preset in that direction.
+| Preset | Speed (cm/s) | Boost | Accel / decel (cm/s²) | Max Radius (cm) | Max Height (cm) |
+|---|---|---|---|---|---|
+| Stock | 1000 | 2x | 4000 | 5000 | 2000 |
+| Better Construction | 2500 | 2.5x | 5000 | 10000 | 5000 |
+| Agile Builder | 4000 | 3x | 10000 | 20000 | 10000 |
+| Long Haul | 5000 | 3x | 12000 | | |
+| Ludicrous Speed | 8000 | 4x | 20000 | | |
+| Map-wide | | | | 1000000 | 500000 |
 
-A small toast in the top-right corner of the screen shows the preset's name, its speed and its boost speed, in the panel's speed unit, for about a second and a half. The keys do nothing on foot, while a game menu is open, or while the panel is open.
+Speed presets cover the first three columns, range presets the last two. Better Construction and Map-wide follow CrazyCovin's Better Construction Drone mod.
+
+### Boost <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
+
+Hold the boost key (default: your game's Sprint key, rebinds included; LeftShift if unreadable) to multiply speed by Boost Multiplier (1 to 10x, default 2x), up to 20000 cm/s. Acceleration and deceleration ramp it on and off. A new base speed applies at once.
+
+### Preset hotkeys and toast <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
+
+While the drone is out, **-** and **=** step to the next slower and faster speed preset, through the built-in and saved presets in speed order. A toast at the top right shows the name, speed and Boost speed, in the panel's unit, for 1.5 s.
+
+<img src="images/preset-toast.png" width="274" alt="The preset toast">
+
+At either end the toast shows where you are. Off every preset, a step goes to the nearest one in that direction ("Custom" if none). Stepping to a saved preset selects it in the panel. Ignored on foot, with a menu open or with the panel open.
 
 ### Interacting from the drone
 
-Normally you have to walk up to a building on foot to press **E** and open its UI — the game clears the interaction target for as long as the drone is out, and measures interaction range from your body rather than the drone. With this plugin the drone can do it too: fly up to a building, look at it, and press the interact key.
+Fly up to a building, look at it and press the interact key to open its UI, as you would on foot. It also works in delete mode, and gathers wild plants, fruit and eggs (host and single player only).
 
-The same key gathers wild plants and other gatherables (fruit, eggs) from the drone. The game ranges a gatherable from your body, so for these the plugin ranges it from the drone instead. Host and single player only; on a client the server still ranges the plant from your body and refuses it. <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
+### The map from the drone <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-### Opening the map from the drone <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
+- **Open it:** the map key opens the map while you fly and closes it again, never over another menu.
+- **Marker:** the drone gets its own, a small targeting reticle in your player-arrow colour (cyan if unreadable) that turns with the drone and keeps its size at any zoom. The game's arrow stays at your parked body. No setting. It hides if the map can't be matched to the game's markers, and stays off until RELOAD after a fault.
+- **Reveal:** `Drone Reveals Map` (off by default) uncovers the map as you fly, at the walking radius and spacing, upgrades included. Saved with your game. Not inside the Forgotten Engine.
 
-The game's map key does nothing while the drone is out. With this plugin, pressing the map key while flying opens the map.
-
-### The drone on the map <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
-
-With the map open in drone mode, the drone gets its own marker, drawn over the map in the colour of your player arrow. It is a small copy of the drone's targeting reticle and turns with the drone's heading. The game draws no marker for the drone: its own player arrow stays at your body, parked where you launched the drone. There is no setting for it.
-
-### Revealing the map from the drone <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
-
-Flying the drone does not uncover the map the way walking does, because the game uncovers it around your body. Turn on `Drone Reveals Map` (under `[Interaction]`, default off) and the drone uncovers the map as it flies, at the same radius and spacing as walking, including your upgrades. What it uncovers is saved with your game. Nothing is revealed inside the Forgotten Engine.
+<img src="images/map-marker.png" width="480" alt="The drone map marker in four headings">
 
 ### Mining from the drone <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-Hold the mining laser key (default **G**, `Mining Laser Key` under `[Controls]`) while flying to mine the ore under the crosshair: meteor ores, their chunks and infinite ore veins, within the mining tool's range and with its damage and rate. The yield goes to your inventory. Mining stops when you let go, when the target changes or leaves range, and when the drone is recalled; it also stops, until you press the key again, when your inventory can't take the next grant or the drill is overheated. It never builds or deconstructs anything. Host and single player only.
+Hold **G** while flying to mine the ore under the crosshair: meteor ores, their chunks and infinite ore veins. Range, damage, fire rate, heat, beam and sounds all follow the mining tool; yield goes to your inventory. Host and single player only.
 
-The laser looks and sounds like the mining tool: its beam, its start, loop and finish sounds, and its click when you press the key while overheated. It also heats like the tool, with the tool's own numbers: the same heat build-up, cooling delay and overheat lockout. A ring around the crosshair shows the heat, filling clockwise from 12 o'clock, shifting from your marker colour through orange to red, pulsing from 85% and flashing while the laser is locked out. Your drill's own heat is read, never changed. The laser takes what the drill has: if you carry the unlimited heat tag (the game's own cheat, or BetterCheats' No Handheld Drill Overheat) it never heats, its fire rate follows the drill's fire rate bonuses as last seen with the drill in hand, and BetterCheats' Mining Damage, Range, Hit Rate and Overheat Cooldown rows apply to it too.
+<a href="images/laser-heat-ring.png"><img src="images/laser-heat-ring.png" width="480" alt="The laser heat ring from 25% to overheated"></a>
 
-A small ore chunk, such as Ignitium, can slip out from under the crosshair as the drone drifts. The laser aims with a little slack, catching a small ore just beside the crosshair, and holds the ore it is mining through a miss shorter than about a third of a second.
+- **Stops** on release, a new or lost target, recall, an open menu or death. After a full inventory, press again. After an overheat it stays locked until the heat has drained (about 97 s for the laser).
+- **Aim:** a 25 cm sphere catches small ore beside the crosshair. The target holds 0.35 s through a miss.
+- **Heat:** one stack per 0.2 s, overheat at 100. Cooling starts after 8 s (15 s after an overheat), then one stack per 0.82 s.
+- **Heat ring:** around the crosshair, filling clockwise from 12 o'clock in your marker colour, orange by 75%, red by 90%. Dims while cooling holds, shrinks as it drains, pulses from 85%, flashes red while locked out.
+- **Drill:** its heat is read, never changed; the unlimited heat tag (BetterCheats' No Handheld Drill Overheat) means no heat. Fire rate follows the drill's bonuses as last seen in hand. BetterCheats' Mining Damage, Range, Hit Rate and Overheat Cooldown rows apply.
 
-### Keeping your character on the floor <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
+### Floor guard <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-Buildings and the ground around your parked character are unloaded when you fly a long way out (well past the stock drone range), and on return the character could drop through the missing floor. The plugin remembers where the character stood when the drone went out. With the range raised above stock, if the character starts falling straight down out of that spot, during the flight or after the drone returns, it is held there until the floor is back, then set down walking. Nothing is touched when the floor is fine; walking, jumping or being knocked back ends the watch; and a floor that is really gone (deconstructed, destroyed) is not held for: the hold gives up after ten seconds. There is no setting for it.
+With the range above stock, flying far out can unload the floor under your parked character. If it falls straight down from its spot (100 cm or more while the drone is out, any fall after return), it is held there until the floor is back, then set down walking. It gives up after 10 s. Walking, jumping or a knockback ends it. No setting.
 
-### Waves and shelter
+### Wave shelter <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-`Always Allow Drone` (under `[Drone]`, default off) lets you use the drone in places it is normally blocked, including during wave events.
-
-While the drone is out, the shelter that protects you from a wave is judged at your parked body, not at the drone. The game counts the drone's own collision as yours, so flying out of a shelter could expose a sheltered body to the wave's heat, and parking the drone in one could shield an exposed body. With this plugin the drone's surroundings are ignored, and a shelter built or deconstructed around your body during a flight counts at once. With `Always Allow Drone` off, the drone still ends when it flies into an interior, as in the stock game. On foot nothing changes. There is no setting for it. <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
+While the drone is out, wave shelter is judged at your parked body, not the drone, and shelter built or deconstructed around it mid-flight counts at once. With `Always Allow Drone` off the drone still ends in an interior, as in stock. No setting.
 
 ---
 
 ## Configuration
 
-Config is stored in `Plugins\config\BetterDrone.ini` and is generated on first launch. You can also edit the `[Interaction]`, `[Controls]` and `Always Allow Drone` settings in-game via the ModLoader config editor (default key: **F2**). The values you set in the panel (speed, boost, acceleration, deceleration, range, audio volumes and the speed unit) are saved to `Plugins\config\BetterDrone-Panel.ini`, and saved presets to `Plugins\config\BetterDrone-Presets.ini`.
+Config is stored in `Plugins\config\BetterDrone.ini` and is generated on first launch. Edit it in-game via the ModLoader config editor (default key: **F2**); changes apply live, keys included. Hand edits to any file need a restart or RELOAD.
 
-| Key (`[Drone]`, `BetterDrone-Panel.ini`) | Description |
-|---|---|
-| `SpeedPerSec` | Movement speed in cm/s (default `1000`, max `20000`) |
-| `MaxRadius` | Horizontal range in cm (default `5000`, max `1000000`) |
-| `MaxHeight` | Vertical range in cm (default `2000`, max `500000`) |
+<a href="images/config-page.png"><img src="images/config-page.png" width="480" alt="BetterDrone's rows on the ModLoader config page"></a>
 
-| Key (`[Drone]`) | Description |
-|---|---|
-| `Always Allow Drone` | Allow the drone in places it's normally blocked, including wave events (default `false`) |
+| Section | Key | Default | Description |
+|---|---|---|---|
+| `[Drone]` | `Always Allow Drone` | `false` | Drone allowed where blocked |
+| `[Interaction]` | `Interact In Drone Mode` | `true` | Interact from the drone |
+| `[Interaction]` | `Interact Key` | `E` | Match your game's interact key |
+| `[Interaction]` | `Map In Drone Mode` | `true` | Map from the drone |
+| `[Interaction]` | `Map Key` | `M` | Match your game's map key |
+| `[Interaction]` | `Drone Reveals Map` | `false` | Flying uncovers the map |
+| `[Controls]` | `Toggle Key` | `F10` | Panel (BetterCheats' default too) |
+| `[Controls]` | `Boost Key` | `Sprint` | Held to boost; `Sprint` follows your Sprint key |
+| `[Controls]` | `Previous Preset Key` | `Hyphen` | Slower speed preset |
+| `[Controls]` | `Next Preset Key` | `Equals` | Faster speed preset |
+| `[Controls]` | `Mining Laser Key` | `G` | Held to mine |
 
-| Key (`[Interaction]`) | Description |
-|---|---|
-| `Interact In Drone Mode` | Let the drone open building UIs and gather plants (default `true`) |
-| `Interact Key` | Key used to interact while the drone is out (default `E`) — set this to match your in-game interact key |
-| `Map In Drone Mode` | Let the drone open the map (default `true`) |
-| `Map Key` | Key used to open the map while the drone is out (default `M`) — set this to match your in-game map key |
-| `Drone Reveals Map` | Flying the drone uncovers the map the way walking does (default `false`) |
+Panel values are saved to `Plugins\config\BetterDrone-Panel.ini`, clamped to these ranges. Values in an older `BetterDrone.ini` move over on first run.
 
-| Key (`[Controls]`) | Description |
-|---|---|
-| `Toggle Key` | Opens and closes the BetterDrone panel (default `F10`) |
-| `Boost Key` | Key held to boost drone speed (default `Sprint`, which follows your game's Sprint key) |
-| `Previous Preset Key` | Steps to the next slower speed preset while the drone is out (default `Hyphen`) |
-| `Next Preset Key` | Steps to the next faster speed preset while the drone is out (default `Equals`) |
-| `Mining Laser Key` | Key held to mine the ore under the crosshair from the drone (default `G`) — host and single player only |
+| Section | Key | Range | Default |
+|---|---|---|---|
+| `[Drone]` | `SpeedPerSec` | 1 to 20000 cm/s | `1000` |
+| `[Drone]` | `MaxRadius` | 100 to 1000000 cm | `5000` |
+| `[Drone]` | `MaxHeight` | 100 to 500000 cm | `2000` |
+| `[Controls]` | `BoostMultiplier` | 1 to 10 | `2` |
+| `[Controls]` | `Acceleration`, `Deceleration` | 4000 to 50000 cm/s² | `4000` |
+| `[Audio]` | `IdleVolume`, `MovementVolume`, `RotationVolume`, `StationVolume` | 0 to 1 | `1` |
+| `[UI]` | `SpeedUnit` | `km/h`, `mph`, `cm/s` | `km/h` |
 
-Changes made in the panel or the config editor are applied live — no restart required, except `Interact Key` and `Map Key`, which are picked up on the next launch.
+Saved presets are in `Plugins\config\BetterDrone-Presets.ini`: `[Speed:<name>]` (`speedPerSec`, `boostMultiplier`, `acceleration`, `deceleration`) and `[Range:<name>]` (`maxRadius`, `maxHeight`).
 
 ---
 
@@ -109,7 +120,7 @@ Changes made in the panel or the config editor are applied live — no restart r
 
 2. Extract into your game's `Binaries\Win64\` folder. The ZIP contains a `Plugins\` folder — it will sit alongside your existing `dwmapi.dll`.
 
-3. After the first launch, set your desired values in the BetterDrone panel, or edit `Plugins\config\BetterDrone.ini` and `Plugins\config\BetterDrone-Panel.ini` directly (restart the game or press RELOAD to pick up hand edits).
+3. After the first launch, set your values in the BetterDrone panel, or edit the INI files above.
 
 > **Requires [StarRupture-ModLoader](https://github.com/AlienXAXS/StarRupture-ModLoader)** to be installed first.
 
@@ -121,7 +132,7 @@ Changes made in the panel or the config editor are applied live — no restart r
 |---|---|
 | Values not changing | Check `modloader.log` in `Binaries\Win64\` for errors. |
 | Plugin not loading | Confirm ModLoader is installed and `BetterDrone.dll` is in `Plugins\`. |
-| Mining laser does nothing | It works in drone mode only, on the host or in single player, and stops while your inventory is full, or the drill or the laser is overheated. |
+| Mining laser does nothing | Drone mode, host or single player only. Full inventory: press again. Overheated: wait for the ring to clear. |
 
 ---
 
@@ -141,4 +152,6 @@ Use at your own risk. The authors are not responsible for any damage caused by u
 
 ## Credits
 
-<a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a> marks features added by @msantoro12, built with Claude Code.
+<a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a> Reworked and extended by [@msantoro12](https://github.com/msantoro12), creator of [StarRupture Planner](https://starrupture.goodstuff.software). Built with Claude Code.
+
+<a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a> marks features he added.
