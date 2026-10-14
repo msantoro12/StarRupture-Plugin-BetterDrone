@@ -39,6 +39,12 @@
 // movement component, and the body stays where it was left while the drone
 // is out. InitDroneFog feeds the drone's position to the same function, at
 // the same spacing, when "Drone Reveals Map" is on.
+//
+// The building menu closes on Escape and Q by putting the building tool
+// away, and in drone mode putting the tool away ends the drone. Every other
+// menu closes on those keys and nothing more. InitDroneBuildMenu makes the
+// building menu close like the others while the drone is out; on foot it is
+// left as it is.
 
 struct IPluginSelf;
 struct IPluginHookScanner;
@@ -66,6 +72,13 @@ void ResolveDroneFog(IPluginSelf* self, IPluginHookScanner* scanner);
 bool InitDroneFog();
 
 void ShutdownDroneFog();
+
+// Same contract as ResolveDroneInteract, for the building menu path.
+void ResolveDroneBuildMenu(IPluginSelf* self, IPluginHookScanner* scanner);
+
+bool InitDroneBuildMenu();
+
+void ShutdownDroneBuildMenu();
 
 // "Drone Reveals Map" as the loader just reported it. The tick reads a
 // cached copy, never the INI.
