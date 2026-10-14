@@ -12,7 +12,7 @@ Patches the game's drone developer settings CDO at runtime to apply your configu
 
 ### The BetterDrone panel <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-Opens with **F10**, the **BETTER DRONE** row under OPTIONS in the pause menu, or the **BetterDrone** button under Plugin Tools on the loader's config page. **Esc** or **Q** closes it. Game sessions only.
+Opens with **F10** (rebindable on the loader's Config page, Controls), the **BETTER DRONE** row under OPTIONS in the pause menu, or the **BetterDrone** button under Plugin Tools on the loader's config page. **Esc** or **Q** closes it. Game sessions only.
 
 <a href="images/panel.png"><img src="images/panel.png" width="480" alt="The BetterDrone panel"></a>
 
@@ -33,11 +33,11 @@ Speed presets cover the first three columns, range presets the last two. Better 
 
 ### Boost <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-Hold the boost key (default: your game's Sprint key, rebinds included; LeftShift if unreadable) to multiply speed by Boost Multiplier (1 to 10x, default 2x), up to 20000 cm/s. Acceleration and deceleration ramp it on and off. A new base speed applies at once.
+Hold the boost key (default: your game's Sprint key, rebinds included; LeftShift if unreadable; rebindable on the loader's Config page, Controls) to multiply speed by Boost Multiplier (1 to 10x, default 2x), up to 20000 cm/s. Acceleration and deceleration ramp it on and off. A new base speed applies at once.
 
 ### Preset hotkeys and toast <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-While the drone is out, **-** and **=** step to the next slower and faster speed preset, through the built-in and saved presets in speed order. A toast at the top right shows the name, speed and Boost speed, in the panel's unit, for 1.5 s.
+While the drone is out, **-** and **=** (rebindable on the loader's Config page, Controls) step to the next slower and faster speed preset, through the built-in and saved presets in speed order. A toast at the top right shows the name, speed and Boost speed, in the panel's unit, for 1.5 s.
 
 <img src="images/preset-toast.png" width="274" alt="The preset toast">
 
@@ -45,11 +45,11 @@ At either end the toast shows where you are. Off every preset, a step goes to th
 
 ### Interacting from the drone
 
-Fly up to a building, look at it and press the interact key to open its UI, as you would on foot. It also works in delete mode, and gathers wild plants, fruit and eggs (host and single player only).
+Fly up to a building, look at it and press the interact key (**E**; rebindable on the loader's Config page, Interaction) to open its UI, as you would on foot. It also works in delete mode, and gathers wild plants, fruit and eggs (host and single player only).
 
 ### The map from the drone <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-- **Open it:** the map key opens the map while you fly and closes it again, never over another menu.
+- **Open it:** the map key (**M**; rebindable on the loader's Config page, Interaction) opens the map while you fly and closes it again, never over another menu.
 - **Marker:** the drone gets its own, a small targeting reticle in your player-arrow colour (cyan if unreadable) that turns with the drone and keeps its size at any zoom. The game's arrow stays at your parked body. No setting. It hides if the map can't be matched to the game's markers, and stays off until RELOAD after a fault.
 - **Reveal:** `Drone Reveals Map` (off by default) uncovers the map as you fly, at the walking radius and spacing, upgrades included. Saved with your game. Not inside the Forgotten Engine.
 
@@ -57,7 +57,7 @@ Fly up to a building, look at it and press the interact key to open its UI, as y
 
 ### Mining from the drone <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-Hold **G** while flying to mine the ore under the crosshair: meteor ores, their chunks and infinite ore veins. Range, damage, fire rate, heat, beam and sounds all follow the mining tool; yield goes to your inventory. Host and single player only.
+Hold **G** (rebindable on the loader's Config page, Controls) while flying to mine the ore under the crosshair: meteor ores, their chunks and infinite ore veins. Range, damage, fire rate, heat, beam and sounds all follow the mining tool; yield goes to your inventory. Host and single player only.
 
 <a href="images/laser-heat-ring.png"><img src="images/laser-heat-ring.png" width="480" alt="The laser heat ring from 25% to overheated"></a>
 
@@ -73,7 +73,7 @@ With the range above stock, flying far out can unload the floor under your parke
 
 ### Wave shelter <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-While the drone is out, wave shelter is judged at your parked body, not the drone, and shelter built or deconstructed around it mid-flight counts at once. With `Always Allow Drone` off the drone still ends in an interior, as in stock. No setting.
+You can fly the drone outside during a wave while your character stays safe in the shelter and won't die. Shelter is judged at your character's body, not at the drone, and shelter built or deconstructed around it mid-flight counts at once. With `Always Allow Drone` off the drone still ends in an interior, as in stock. No setting.
 
 ---
 
@@ -151,6 +151,8 @@ Use at your own risk. The authors are not responsible for any damage caused by u
 ---
 
 ## Credits
+
+Original mod by [@AlienXAXS](https://github.com/AlienXAXS).
 
 <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a> Reworked and extended by [@msantoro12](https://github.com/msantoro12), creator of [StarRupture Planner](https://starrupture.goodstuff.software). Built with Claude Code.
 
