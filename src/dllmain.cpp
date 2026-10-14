@@ -123,6 +123,7 @@ extern "C" __declspec(dllexport) void OnPluginLoadHooks(IPluginSelf* self, IPlug
     ResolveDroneInteract(self, scanner);
     ResolveDroneMap(self, scanner);
     ResolveDroneFog(self, scanner);
+    ResolveDroneBuildMenu(self, scanner);
     ResolveDroneLaser(self, scanner);
 }
 
@@ -148,6 +149,7 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     InitDroneInteract();
     InitDroneMap();
     InitDroneFog();
+    InitDroneBuildMenu();
     RegisterBoostKey(self);
 
     if (self->hooks->UI)
@@ -168,6 +170,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     ShutdownDroneInteract();
     ShutdownDroneMap();
     ShutdownDroneFog();
+    ShutdownDroneBuildMenu();
     ShutdownWavePatch();
     DroneAudio::Shutdown();
     ShutdownDroneMapMarker(g_self);

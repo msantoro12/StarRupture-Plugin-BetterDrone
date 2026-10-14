@@ -517,15 +517,22 @@ namespace
         return nullptr;
     }
 
-    // The map, if it is the active widget on the menu layer and not already
-    // closing. DisplayedWidget is what the stack's GetActiveWidget returns.
-    SDK::UCrUW_MapMenu* ActiveMap(SDK::UCommonActivatableWidgetContainerBase* layer)
+    // The menu of type T, if it is the active widget on the menu layer and
+    // not already closing. DisplayedWidget is what the stack's
+    // GetActiveWidget returns.
+    template <class T>
+    T* ActiveMenu(SDK::UCommonActivatableWidgetContainerBase* layer)
     {
         SDK::UCommonActivatableWidget* top = layer->DisplayedWidget;
-        if (!top || !top->bIsActive || !top->IsA(SDK::UCrUW_MapMenu::StaticClass()))
+        if (!top || !top->bIsActive || !top->IsA(T::StaticClass()))
             return nullptr;
 
-        return static_cast<SDK::UCrUW_MapMenu*>(top);
+        return static_cast<T*>(top);
+    }
+
+    SDK::UCrUW_MapMenu* ActiveMap(SDK::UCommonActivatableWidgetContainerBase* layer)
+    {
+        return ActiveMenu<SDK::UCrUW_MapMenu>(layer);
     }
 
     // Idle until the map key is pressed, then tracks the menu layer only
@@ -698,6 +705,88 @@ namespace
 
         g_lastReveal    = here;
         g_hasLastReveal = true;
+    }
+
+    // ACrCharacterPlayerBase::NativeOnWeaponCancelTool(this). Puts the
+    // building tool away (MulticastCancelTool, or the server RPC on a client),
+    // unless the building component can restore a move in progress, in which
+    // case it does that instead. Putting the tool away while the drone is out
+    // also ends the drone: the unequip reaches DeactivateBuildingDrone from
+    // UCrWeaponComponent::PostEquip.
+    //
+    // Two things call it: the cancel-tool input action, and
+    // UCrUW_BuildingMenu::HandleCancelTool. The building menu is the one menu
+    // that does not close the way the others do. UCrUW_ActivatableWidget
+    // binds its Back and Close actions (Escape and Q) to HandleDeactivate;
+    // UCrUW_BuildingMenu::SetupInputs binds both, and its CloseMenuInputAction,
+    // to HandleCancelTool, which tail-calls this with the menu's Player. On
+    // foot that closes the menu and puts the tool away in one press. In drone
+    // mode the same press ends the drone.
+    typedef void (__fastcall* NativeOnWeaponCancelTool_t)(void* character);
+
+    // UCrUW_ActivatableWidget::HandleDeactivate(this): how every other menu
+    // closes on Back and Close. With a Chimera controller it hands the menu
+    // layer to UCrUIManagerSubsystem::CloseMainWidgetByClass, which also puts
+    // the input config back to the game.
+    typedef void (__fastcall* HandleDeactivate_t)(void* widget);
+
+    // Resolved during OnPluginLoadHooks; 0 means the pattern missed on this build.
+    uintptr_t g_addrCancelTool       = 0;
+    uintptr_t g_addrHandleDeactivate = 0;
+
+    // Runs through the cancel's first gate, the weapon component flag at
+    // 0xDA0, and the controller's building component lookup.
+    constexpr const char* kCancelToolPattern =
+        "40 53 48 83 EC 20 48 8B 81 ?? ?? ?? ?? 48 8B D9 F6 80 ?? ?? ?? ?? 01 75 ?? "
+        "48 8B 89 ?? ?? ?? ?? 48 89 7C 24 30 48 85 C9 74 ?? E8";
+
+    // Runs to the end of the function: the two tails, the jump to
+    // CloseMainWidgetByClass and the fallback to DeactivateWidget for a
+    // controller that is not a Chimera one, are what tell it apart from the
+    // map's and the encyclopedia's own close handlers, which begin the same way.
+    constexpr const char* kHandleDeactivatePattern =
+        "48 89 5C 24 08 57 48 83 EC 20 48 8B 01 48 8B D9 FF 90 ?? ?? ?? ?? 48 8B F8 "
+        "48 85 C0 74 ?? E8 ?? ?? ?? ?? 48 8B 4F 10 48 83 C0 30 48 63 50 08 3B 51 38 "
+        "7F ?? 48 8B 49 30 48 39 04 D1 75 ?? 48 8B CB E8 ?? ?? ?? ?? 48 8B C8 E8 "
+        "?? ?? ?? ?? 48 8B D7 48 8B C8 48 8B 5C 24 30 48 83 C4 20 5F E9 ?? ?? ?? ?? "
+        "48 8B CB 48 8B 5C 24 30 48 83 C4 20 5F E9";
+
+    NativeOnWeaponCancelTool_t g_origCancelTool = nullptr;
+    HookHandle                 g_hookCancelTool = nullptr;
+
+    // The building menu this cancel came from, if the local player is flying
+    // the drone and that menu is the active widget on their menu layer.
+    // HandleCancelTool runs inside the menu's own action handler, so the
+    // menu is still up, and still active, when this is asked. Valid for this
+    // call only.
+    SDK::UCrUW_BuildingMenu* DroneBuildMenu(void* character)
+    {
+        SDK::ACrPlayerControllerBase* pc = LocalController();
+        if (!character || PilotingCharacter(pc) != character)
+            return nullptr;
+
+        SDK::UCommonActivatableWidgetContainerBase* layer = FindMenuLayer(pc);
+        SDK::UCrUW_BuildingMenu* menu = layer ? ActiveMenu<SDK::UCrUW_BuildingMenu>(layer) : nullptr;
+        if (!menu || menu->Player != character)
+            return nullptr;
+
+        return menu;
+    }
+
+    // Game thread: both callers are input handlers.
+    void __fastcall Detour_NativeOnWeaponCancelTool(void* character)
+    {
+        if (SDK::UCrUW_BuildingMenu* menu = DroneBuildMenu(character))
+        {
+            // Close it the way every other menu closes, and leave the tool,
+            // and so the drone, where they are. The next Escape or Q, with
+            // no menu up, goes the usual way.
+            LOG_DEBUG("DroneBuildMenu: building menu closed, drone kept");
+            reinterpret_cast<HandleDeactivate_t>(g_addrHandleDeactivate)(menu);
+            return;
+        }
+
+        g_origCancelTool(character);
     }
 }
 
@@ -907,4 +996,51 @@ void ShutdownDroneFog()
     GetSelf()->hooks->Engine->UnregisterOnTick(OnFogTick);
 
     g_fogEnabled.store(false, std::memory_order_relaxed);
+}
+
+void ResolveDroneBuildMenu(IPluginSelf* self, IPluginHookScanner* scanner)
+{
+    if (!self || !scanner)
+        return;
+
+    g_addrCancelTool = ResolveFunction(self, scanner,
+        "ACrCharacterPlayerBase::NativeOnWeaponCancelTool", kCancelToolPattern);
+    g_addrHandleDeactivate = ResolveFunction(self, scanner,
+        "UCrUW_ActivatableWidget::HandleDeactivate", kHandleDeactivatePattern);
+}
+
+bool InitDroneBuildMenu()
+{
+    if (!g_addrCancelTool || !g_addrHandleDeactivate)
+    {
+        LOG_WARN("DroneBuildMenu: unresolved addresses — cancelTool=0x%llX handleDeactivate=0x%llX; "
+                 "closing the building menu will still end drone mode",
+                 g_addrCancelTool, g_addrHandleDeactivate);
+        return false;
+    }
+
+    g_hookCancelTool = GetSelf()->hooks->Hooks->Install(
+        g_addrCancelTool,
+        reinterpret_cast<void*>(&Detour_NativeOnWeaponCancelTool),
+        reinterpret_cast<void**>(&g_origCancelTool));
+
+    if (!g_hookCancelTool)
+    {
+        LOG_WARN("DroneBuildMenu: hook installation failed");
+        return false;
+    }
+
+    LOG_INFO("DroneBuildMenu: NativeOnWeaponCancelTool at 0x%llX, HandleDeactivate at 0x%llX",
+             g_addrCancelTool, g_addrHandleDeactivate);
+    return true;
+}
+
+void ShutdownDroneBuildMenu()
+{
+    if (g_hookCancelTool)
+    {
+        GetSelf()->hooks->Hooks->Remove(g_hookCancelTool);
+        g_hookCancelTool = nullptr;
+        g_origCancelTool = nullptr;
+    }
 }
