@@ -1,0 +1,9 @@
+Mining laser: hold G in the drone to mine ore with the drill beam (rebindable)
+Drone shows as a marker on the map while you fly
+Speed presets: - and = step slower/faster, with a boost speed toast (rebindable)
+BETTER DRONE row added to the pause menu
+Press E in the drone to gather wild plants within gathering range
+New option Drone Reveals Map: flying uncovers the map (off by default)
+Press M in the drone to open and close the map (rebindable)
+The drone stays out when you close the build menu
+Wave shelter is judged at your parked body while in drone mode
