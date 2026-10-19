@@ -14,7 +14,7 @@ namespace DroneConfig
     // DroneAudio::kVolumeKeys[i].
     enum class PanelFloat : int
     {
-        SpeedPerSec, MaxRadius, MaxHeight,
+        SpeedPerSec, MaxRadius, MaxHeight, SphereRadius,
         BoostMultiplier, Acceleration, Deceleration,
         IdleVolume, MovementVolume, RotationVolume, StationVolume,
         Count
@@ -69,6 +69,7 @@ namespace DroneConfig
         static float ReadSpeedPerSec();
         static float ReadMaxRadius();
         static float ReadMaxHeight();
+        static float ReadSphereRadius();
         static float ReadBoostMultiplier();
         static float ReadAcceleration();
         static float ReadDeceleration();
@@ -80,7 +81,7 @@ namespace DroneConfig
         static float MaxSpeedPerSec();
 
         // The in-panel defaults for fields with no CDO equivalent (Speed,
-        // MaxRadius and MaxHeight instead reset to DroneSettings::orig*, the
+        // MaxRadius, MaxHeight and SphereRadius instead reset to DroneSettings::orig*, the
         // stock CDO values captured in InitDroneSettings).
         static float DefaultBoostMultiplier();
 

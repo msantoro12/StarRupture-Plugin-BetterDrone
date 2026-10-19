@@ -21,6 +21,9 @@ namespace PanelSettings
         case PanelFloat::MaxHeight:
             RequestMaxHeight(applied);
             break;
+        case PanelFloat::SphereRadius:
+            RequestSphereRadius(applied);
+            break;
         case PanelFloat::IdleVolume:
         case PanelFloat::MovementVolume:
         case PanelFloat::RotationVolume:

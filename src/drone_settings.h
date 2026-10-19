@@ -9,6 +9,7 @@ struct DroneSettings
     float* warningRadius  = nullptr;  // BuildingDroneWarningRadius
     float* maxHeight      = nullptr;  // BuildingDroneMaxHeight
     float* warningHeight  = nullptr;  // BuildingDroneWarningHeight
+    float* sphereRadius   = nullptr;  // BuildingDroneSphereRadius (collision radius, cm)
     bool   valid          = false;
 
     // Snapshot of CDO values captured at init, restored on shutdown.
@@ -17,6 +18,7 @@ struct DroneSettings
     float origWarningRadius= 0.f;
     float origMaxHeight    = 0.f;
     float origWarningHeight= 0.f;
+    float origSphereRadius = 0.f;
 };
 
 extern DroneSettings g_drone;
@@ -27,6 +29,10 @@ void UpdateActiveDrones();
 void RequestUpdateActiveDrones();
 void RequestMaxRadius(float radiusCm);
 void RequestMaxHeight(float heightCm);
+
+// Queues a new drone collision radius for the next game tick, which writes
+// it to the settings object and resizes the drone that is out.
+void RequestSphereRadius(float radiusCm);
 
 bool IsInGameSession();
 void InitGameSessionTracking(IPluginSelf* self);

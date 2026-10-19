@@ -37,6 +37,14 @@ namespace
 
     std::atomic<bool> g_lastKnownInDrone{ false };
 
+    // The thread OnDroneTick runs on, so shutdown can tell whether it may
+    // touch the live drone. 0 until the first tick.
+    std::atomic<DWORD> g_gameThreadId{ 0 };
+
+    // Set when a drone launches or Drone Size changes; the tick clears it by
+    // logging the live sphere radius once a drone is there to read.
+    bool g_sphereLogPending = false;
+
     float g_currentEffectiveSpeed = 0.0f;
 
     // Last base speed OnDroneTick observed, so a slider/preset/config change
@@ -201,11 +209,13 @@ bool InitDroneSettings()
     g_drone.warningRadius = &cdo->BuildingDroneWarningRadius;
     g_drone.maxHeight     = &cdo->BuildingDroneMaxHeight;
     g_drone.warningHeight = &cdo->BuildingDroneWarningHeight;
+    g_drone.sphereRadius  = &cdo->BuildingDroneSphereRadius;
     g_drone.origSpeedPerSec   = *g_drone.speedPerSec;
     g_drone.origMaxRadius     = *g_drone.maxRadius;
     g_drone.origWarningRadius = *g_drone.warningRadius;
     g_drone.origMaxHeight     = *g_drone.maxHeight;
     g_drone.origWarningHeight = *g_drone.warningHeight;
+    g_drone.origSphereRadius  = *g_drone.sphereRadius;
     g_drone.valid             = true;
     g_currentEffectiveSpeed   = *g_drone.speedPerSec;
 
@@ -213,19 +223,46 @@ bool InitDroneSettings()
     return true;
 }
 
+namespace
+{
+    // Game thread only. The local player's drone sphere, or nullptr when no
+    // drone is out. Re-resolved on every call, never kept.
+    SDK::USphereComponent* LiveDroneSphere()
+    {
+        SDK::ACrCharacterPlayerBase* character = LocalPlayerCharacter();
+        SDK::ACrCharacterDroneBase* drone = character ? character->BuildingDrone : nullptr;
+        return drone ? drone->SphereComponent : nullptr;
+    }
+}
+
 void RestoreCDODefaults()
 {
     if (!g_drone.valid)
         return;
+
+    // The drone that is out keeps the radius it was spawned or resized with,
+    // so put the stock one back on it as well. Shutdown runs on the game
+    // thread on loader 1.22 and later; anywhere else, leave the live drone.
+    if (GetCurrentThreadId() == g_gameThreadId.load(std::memory_order_relaxed))
+    {
+        try
+        {
+            SDK::USphereComponent* sphere = LiveDroneSphere();
+            if (sphere && std::fabs(sphere->SphereRadius - g_drone.origSphereRadius) > 0.01f)
+                sphere->SetSphereRadius(g_drone.origSphereRadius, true);
+        }
+        catch (...) {}
+    }
 
     *g_drone.speedPerSec   = g_drone.origSpeedPerSec;
     *g_drone.maxRadius     = g_drone.origMaxRadius;
     *g_drone.warningRadius = g_drone.origWarningRadius;
     *g_drone.maxHeight     = g_drone.origMaxHeight;
     *g_drone.warningHeight = g_drone.origWarningHeight;
+    *g_drone.sphereRadius  = g_drone.origSphereRadius;
 
-    LOG_DEBUG("RestoreCDODefaults: speed=%.0f maxRadius=%.0f maxHeight=%.0f",
-        g_drone.origSpeedPerSec, g_drone.origMaxRadius, g_drone.origMaxHeight);
+    LOG_DEBUG("RestoreCDODefaults: speed=%.0f maxRadius=%.0f maxHeight=%.0f sphereRadius=%.0f",
+        g_drone.origSpeedPerSec, g_drone.origMaxRadius, g_drone.origMaxHeight, g_drone.origSphereRadius);
 }
 
 void UpdateActiveDrones()
@@ -279,6 +316,7 @@ void UpdateActiveDrones()
         settings->BuildingDroneWarningRadius    = *g_drone.warningRadius;
         settings->BuildingDroneMaxHeight        = *g_drone.maxHeight;
         settings->BuildingDroneWarningHeight    = *g_drone.warningHeight;
+        settings->BuildingDroneSphereRadius     = *g_drone.sphereRadius;
         ++updated;
     }
 
@@ -328,6 +366,7 @@ namespace
     std::atomic<bool> g_pendingUpdateDrones{ false };
     PendingFloat      g_pendingRadius;
     PendingFloat      g_pendingHeight;
+    PendingFloat      g_pendingSphere;
 }
 
 void RequestUpdateActiveDrones()
@@ -347,6 +386,11 @@ void RequestMaxHeight(float heightCm)
     RequestUpdateActiveDrones();
 }
 
+void RequestSphereRadius(float radiusCm)
+{
+    g_pendingSphere.Request(radiusCm);
+}
+
 void UpdateBoostKeyCache(const char* keyName)
 {
     g_boostKeyVk.store(KeyNameToVk(keyName), std::memory_order_relaxed);
@@ -357,7 +401,16 @@ void OnDroneTick(float deltaSeconds)
     if (!g_drone.valid || !g_drone.speedPerSec)
         return;
 
+    g_gameThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
+
     bool needsInstanceUpdate = false;
+
+    float sphereRadius = 0.0f;
+    if (g_pendingSphere.TakeIfPending(&sphereRadius))
+    {
+        *g_drone.sphereRadius = sphereRadius;
+        g_sphereLogPending = true;
+    }
 
     if (g_pendingUpdateDrones.exchange(false, std::memory_order_relaxed))
     {
@@ -383,12 +436,35 @@ void OnDroneTick(float deltaSeconds)
     if (justEnteredDrone)
     {
         needsInstanceUpdate = true;
+        g_sphereLogPending = true;
 
         // Picks up an in-game rebind of Sprint made mid-session.
         if (g_boostFollowsSprint.load(std::memory_order_relaxed))
             ResolveAndCacheSprintKey();
     }
     g_wasInDrone = inDrone;
+
+    // BeginPlay applies the radius to a drone as it spawns; this resizes one
+    // that is already out. Reading the sphere each tick also covers a spawn
+    // that lands after the launch edge.
+    if (inDrone)
+    {
+        SDK::USphereComponent* sphere = LiveDroneSphere();
+        if (sphere)
+        {
+            const float wanted = *g_drone.sphereRadius;
+            if (std::fabs(sphere->SphereRadius - wanted) > 0.01f)
+                sphere->SetSphereRadius(wanted, true);
+
+            // Temporary diagnostic, once per launch or setting change.
+            if (g_sphereLogPending)
+            {
+                g_sphereLogPending = false;
+                LOG_INFO("Drone Size: live drone sphere radius %.1f cm (setting %.1f, stock %.1f)",
+                    sphere->SphereRadius, wanted, g_drone.origSphereRadius);
+            }
+        }
+    }
 
     bool held = g_boostKeyHeld.load(std::memory_order_relaxed);
     if (!held && inDrone)

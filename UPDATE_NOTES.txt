@@ -6,3 +6,4 @@ Press E in the drone to gather wild plants within gathering range
 New option Drone Reveals Map: flying uncovers the map (off by default)
 The drone stays out when you close the build menu
 Fly the drone outside during a wave; your sheltered character stays safe
+Drone Size setting: a smaller drone collision radius lets the drone fly through narrow gaps such as ladder holes

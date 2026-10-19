@@ -128,6 +128,10 @@ namespace
         { "%.0f cm", 1.0f,       500.0f, 2500.0f, 0.0f, 500000.0f },
     };
 
+    // The drone's collision radius is small enough to read in cm whichever
+    // speed unit is on display.
+    constexpr FieldUnitScale kSphereScale = { "%.0f cm", 1.0f, 1.0f, 5.0f, 20.0f, 50.0f };
+
     constexpr FieldUnitScale kBoostScale = { "%.1fx", 1.0f, 0.5f, 1.0f, 1.0f, 10.0f };
 
     // Volume is already a plain 0..1 fraction, so RenderScaledRow's engine
@@ -1347,6 +1351,29 @@ void RenderDronePanel(IModLoaderImGui* ui)
         snprintf(heightEquiv, sizeof(heightEquiv), "Vertical Ceiling: %.1f m  |  %.0f ft",
             engineHeight * 0.01f, engineHeight * 0.0328084f);
         ui->TextDisabled(heightEquiv);
+    }
+
+    ui->Spacing();
+
+    if (ui->BeginTable("##drone_size_table", 3, kTableFlags))
+    {
+        ui->TableSetupColumn("", 0, 0.36f);
+        ui->TableSetupColumn("", 0, 0.54f);
+        ui->TableSetupColumn("", 0, 0.10f);
+
+        float newSize = 0.0f;
+        bool  sizeCommit = false;
+        if (RenderScaledRow(ui, "##dsize", "Drone Size",
+                             "Collision radius of the drone. Smaller fits through narrower gaps, such as ladder holes. 50 is stock.",
+                             DroneConfig::Config::ReadSphereRadius(), g_drone.origSphereRadius,
+                             kSphereScale, &newSize, &sizeCommit))
+        {
+            PanelSettings::SetLive(PanelFloat::SphereRadius, newSize);
+            if (sizeCommit)
+                PanelSettings::Commit(PanelFloat::SphereRadius);
+        }
+
+        ui->EndTable();
     }
 
     ui->Spacing();

@@ -20,6 +20,8 @@ namespace DroneConfig
         constexpr float kMaxRadiusBound      = 1000000.0f;
         constexpr float kMinHeight           = 100.0f;
         constexpr float kMaxHeightBound      = 500000.0f;
+        constexpr float kMinSphereRadius     = 20.0f;
+        constexpr float kMaxSphereRadius     = 50.0f;   // the stock radius
         constexpr float kMinBoostMultiplier  = 1.0f;
         constexpr float kMaxBoostMultiplier  = 10.0f;
 
@@ -178,6 +180,7 @@ namespace DroneConfig
             { "Drone",    "SpeedPerSec",     kMinSpeedPerSec,     kMaxSpeedPerSec,     1000.0f },
             { "Drone",    "MaxRadius",       kMinRadius,          kMaxRadiusBound,     5000.0f },
             { "Drone",    "MaxHeight",       kMinHeight,          kMaxHeightBound,     2000.0f },
+            { "Drone",    "SphereRadius",    kMinSphereRadius,    kMaxSphereRadius,    kMaxSphereRadius },
             { "Controls", "BoostMultiplier", kMinBoostMultiplier, kMaxBoostMultiplier, 2.0f    },
             { "Controls", "Acceleration",    kMinAccelDecel,      kMaxAccelDecel,      kDefaultAccelDecel },
             { "Controls", "Deceleration",    kMinAccelDecel,      kMaxAccelDecel,      kDefaultAccelDecel },
@@ -438,6 +441,7 @@ namespace DroneConfig
     float Config::ReadSpeedPerSec()      { return ReadPanel(PanelFloat::SpeedPerSec); }
     float Config::ReadMaxRadius()        { return ReadPanel(PanelFloat::MaxRadius); }
     float Config::ReadMaxHeight()        { return ReadPanel(PanelFloat::MaxHeight); }
+    float Config::ReadSphereRadius()     { return ReadPanel(PanelFloat::SphereRadius); }
     float Config::ReadBoostMultiplier()  { return ReadPanel(PanelFloat::BoostMultiplier); }
     float Config::ReadAcceleration()     { return ReadPanel(PanelFloat::Acceleration); }
     float Config::ReadDeceleration()     { return ReadPanel(PanelFloat::Deceleration); }

@@ -47,6 +47,7 @@ static void OnEngineInit()
     *g_drone.speedPerSec   = DroneConfig::Config::ReadSpeedPerSec();
     *g_drone.maxRadius     = DroneConfig::Config::ReadMaxRadius();
     *g_drone.maxHeight     = DroneConfig::Config::ReadMaxHeight();
+    *g_drone.sphereRadius  = DroneConfig::Config::ReadSphereRadius();
     *g_drone.warningRadius = *g_drone.maxRadius * 0.95f;
     *g_drone.warningHeight = *g_drone.maxHeight * 0.95f;
 
