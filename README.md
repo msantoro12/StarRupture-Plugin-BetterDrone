@@ -130,7 +130,7 @@ Saved presets are in `Plugins\config\BetterDrone-Presets.ini`: `[Speed:<name>]` 
 
 | Problem | Solution |
 |---|---|
-| Values not changing | Check `modloader.log` in `Binaries\Win64\` for errors. |
+| Values not changing | Check `ModLoader.log` in `Binaries\Win64\ModLoader\Logs\` for errors. |
 | Plugin not loading | Confirm ModLoader is installed and `BetterDrone.dll` is in `Plugins\`. |
 | Mining laser does nothing | Drone mode, host or single player only. Full inventory: press again. Overheated: wait for the ring to clear. |
 
