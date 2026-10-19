@@ -118,7 +118,7 @@ Saved presets are in `Plugins\config\BetterDrone-Presets.ini`: `[Speed:<name>]` 
 1. Download the latest release ZIP from the [Releases](../../releases) page:
    - `BetterDrone-Client-*.zip`
 
-2. Extract into your game's `Binaries\Win64\` folder. The ZIP contains a `Plugins\` folder — it will sit alongside your existing `dwmapi.dll`.
+2. Extract into your game's `Binaries\Win64\ModLoader\` folder. The ZIP contains a `Plugins\` folder, so the DLL lands in `ModLoader\Plugins\`.
 
 3. After the first launch, set your values in the BetterDrone panel, or edit the INI files above.
 
