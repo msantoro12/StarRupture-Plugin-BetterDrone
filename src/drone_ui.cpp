@@ -240,12 +240,15 @@ namespace
 
         imgui->PopID();
 
-        if (changed && outEngineValue)
+        // A commit can arrive a frame after the last change (the item is
+        // released), so the value goes out with it too; callers commit only
+        // when they are handed a value.
+        if (outEngineValue)
             *outEngineValue = value / scale.factor;
         if (outCommit)
             *outCommit = commit;
 
-        return changed;
+        return changed || commit;
     }
 
     // One row per DroneAudio::kVolumeKeys entry, live-applied to the drone
