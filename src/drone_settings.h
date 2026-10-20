@@ -9,7 +9,6 @@ struct DroneSettings
     float* warningRadius  = nullptr;  // BuildingDroneWarningRadius
     float* maxHeight      = nullptr;  // BuildingDroneMaxHeight
     float* warningHeight  = nullptr;  // BuildingDroneWarningHeight
-    float* sphereRadius   = nullptr;  // BuildingDroneSphereRadius (collision radius, cm)
     bool   valid          = false;
 
     // Snapshot of CDO values captured at init, restored on shutdown.
@@ -18,6 +17,10 @@ struct DroneSettings
     float origWarningRadius= 0.f;
     float origMaxHeight    = 0.f;
     float origWarningHeight= 0.f;
+
+    // BuildingDroneSphereRadius, the drone's collision radius in cm. Read
+    // only: Drone Size resizes the live drone instead of writing the CDO,
+    // so every drone spawns at this radius and its stock mass can be read.
     float origSphereRadius = 0.f;
 };
 
@@ -30,8 +33,8 @@ void RequestUpdateActiveDrones();
 void RequestMaxRadius(float radiusCm);
 void RequestMaxHeight(float heightCm);
 
-// Queues a new drone collision radius for the next game tick, which writes
-// it to the settings object and resizes the drone that is out.
+// Queues a new drone collision radius for the next game tick, which
+// resizes the drone that is out (and each one launched after it).
 void RequestSphereRadius(float radiusCm);
 
 bool IsInGameSession();

@@ -6,6 +6,7 @@
 #include "drone_sprint_key.h"
 #include "drone_key_vk.h"
 #include "plugin_helpers.h"
+#include "object_ref.h"
 #include <AuActorPlacement_classes.hpp>
 #include <Chimera_classes.hpp>
 #include <BP_FloatingDrone_classes.hpp>
@@ -41,10 +42,6 @@ namespace
     // touch the live drone. 0 until the first tick.
     std::atomic<DWORD> g_gameThreadId{ 0 };
 
-    // Set when a drone launches or Drone Size changes; the tick clears it by
-    // logging the live sphere radius once a drone is there to read.
-    bool g_sphereLogPending = false;
-
     float g_currentEffectiveSpeed = 0.0f;
 
     // Last base speed OnDroneTick observed, so a slider/preset/config change
@@ -62,6 +59,10 @@ namespace
     bool g_inGameSession = false;
 
     bool g_wasInDrone = false;
+
+    // Drone Size wanted on the live drone, in cm. Set from the pending
+    // request on the tick; starts at the stock radius.
+    float g_droneSizeCm = 0.0f;
     bool g_boostWasActive = false;
     bool g_loggedInstanceReport = false;
 
@@ -209,15 +210,15 @@ bool InitDroneSettings()
     g_drone.warningRadius = &cdo->BuildingDroneWarningRadius;
     g_drone.maxHeight     = &cdo->BuildingDroneMaxHeight;
     g_drone.warningHeight = &cdo->BuildingDroneWarningHeight;
-    g_drone.sphereRadius  = &cdo->BuildingDroneSphereRadius;
     g_drone.origSpeedPerSec   = *g_drone.speedPerSec;
     g_drone.origMaxRadius     = *g_drone.maxRadius;
     g_drone.origWarningRadius = *g_drone.warningRadius;
     g_drone.origMaxHeight     = *g_drone.maxHeight;
     g_drone.origWarningHeight = *g_drone.warningHeight;
-    g_drone.origSphereRadius  = *g_drone.sphereRadius;
+    g_drone.origSphereRadius  = cdo->BuildingDroneSphereRadius;
     g_drone.valid             = true;
     g_currentEffectiveSpeed   = *g_drone.speedPerSec;
+    g_droneSizeCm             = g_drone.origSphereRadius;
 
     LOG_DEBUG("InitDroneSettings: CDO found at %p", static_cast<void*>(cdo));
     return true;
@@ -233,6 +234,111 @@ namespace
         SDK::ACrCharacterDroneBase* drone = character ? character->BuildingDrone : nullptr;
         return drone ? drone->SphereComponent : nullptr;
     }
+
+    // Drone Size, applied to the live drone. Game thread only.
+    //
+    // The game moves the drone by pushing its physics body with a force, so
+    // a body that got lighter as it shrank would fly faster. Each drone's
+    // body keeps the mass it has at the stock radius: read once, before the
+    // first resize, and set as a mass override after every resize. The body
+    // is held as an ObjectRef, so a drone that is gone is never touched.
+    ObjectRef<SDK::USphereComponent> g_sizedSphere;
+
+    // g_sizedSphere's body as the game made it, at the stock radius.
+    struct StockBody
+    {
+        float massKg = 0.0f;
+        float overrideKg = 0.0f;   // BodyInstance.MassInKgOverride
+        bool  overridden = false;  // the drone already had a mass override
+    };
+    StockBody g_stockBody;
+
+    // Temporary diagnostic: one DroneSizeProbe line per resize, written once
+    // the radius has held still for kSizeProbeSettleMs, since a slider drag
+    // resizes on every frame.
+    struct SizeProbe
+    {
+        bool      pending = false;
+        float     massBefore = 0.0f;       // before the first resize of the burst
+        float     massAfterResize = 0.0f;  // after the last resize, before the override
+        ULONGLONG lastResizeMs = 0;
+    };
+    SizeProbe g_sizeProbe;
+    constexpr ULONGLONG kSizeProbeSettleMs = 500;
+
+    bool IsStockSize(float radiusCm)
+    {
+        return std::fabs(radiusCm - g_drone.origSphereRadius) <= 0.01f;
+    }
+
+    // Sets the body's mass the way the game had it: an override only if
+    // the drone came with one.
+    void SetStockMassSetting(SDK::USphereComponent* sphere)
+    {
+        sphere->SetMassOverrideInKg(SDK::FName(), g_stockBody.overrideKg, g_stockBody.overridden);
+    }
+
+    void ResizeDroneSphere(SDK::USphereComponent* sphere, float radiusCm)
+    {
+        if (g_sizedSphere.Get() != sphere)
+        {
+            // A drone not resized yet spawned at the stock radius, since
+            // the CDO is left alone. Anything else is put back first, so the
+            // mass read is the stock one.
+            if (!IsStockSize(sphere->SphereRadius))
+                sphere->SetSphereRadius(g_drone.origSphereRadius, true);
+
+            g_sizedSphere.Set(sphere);
+            g_stockBody.massKg     = sphere->GetMass();
+            g_stockBody.overrideKg = sphere->BodyInstance.MassInKgOverride;
+            g_stockBody.overridden = g_stockBody.massKg > 0.0f &&
+                std::fabs(g_stockBody.overrideKg - g_stockBody.massKg) <= 0.001f * g_stockBody.massKg;
+        }
+
+        if (!g_sizeProbe.pending)
+        {
+            g_sizeProbe.pending    = true;
+            g_sizeProbe.massBefore = sphere->GetMass();
+        }
+
+        // Back to the game's own mass setting first, so the probe reads the
+        // mass the new shape gets by itself.
+        SetStockMassSetting(sphere);
+        sphere->SetSphereRadius(radiusCm, true);
+        g_sizeProbe.massAfterResize = sphere->GetMass();
+        g_sizeProbe.lastResizeMs    = GetTickCount64();
+
+        if (!IsStockSize(radiusCm) && g_stockBody.massKg > 0.0f)
+            sphere->SetMassOverrideInKg(SDK::FName(), g_stockBody.massKg, true);
+    }
+
+    void TickDroneSizeProbe(SDK::USphereComponent* sphere)
+    {
+        if (!g_sizeProbe.pending || GetTickCount64() - g_sizeProbe.lastResizeMs < kSizeProbeSettleMs)
+            return;
+
+        g_sizeProbe.pending = false;
+        LOG_INFO("DroneSizeProbe: radius %.1f cm, mass %.2f kg before, %.2f kg after the resize alone, "
+                 "%.2f kg applied (stock %.2f kg, game override %s), linear damping %.3f",
+            sphere->SphereRadius, g_sizeProbe.massBefore, g_sizeProbe.massAfterResize, sphere->GetMass(),
+            g_stockBody.massKg, g_stockBody.overridden ? "yes" : "no", sphere->GetLinearDamping());
+    }
+
+    // Puts the drone we resized back as the game made it: the stock radius
+    // and its own mass setting. A drone that is gone needs nothing. Game
+    // thread only.
+    void RestoreDroneBody()
+    {
+        SDK::USphereComponent* sphere = g_sizedSphere.Get();
+        g_sizedSphere.Reset();
+        g_sizeProbe.pending = false;
+        if (!sphere)
+            return;
+
+        if (!IsStockSize(sphere->SphereRadius))
+            sphere->SetSphereRadius(g_drone.origSphereRadius, true);
+        SetStockMassSetting(sphere);
+    }
 }
 
 void RestoreCDODefaults()
@@ -240,18 +346,19 @@ void RestoreCDODefaults()
     if (!g_drone.valid)
         return;
 
-    // The drone that is out keeps the radius it was spawned or resized with,
-    // so put the stock one back on it as well. Shutdown runs on the game
-    // thread on loader 1.22 and later; anywhere else, leave the live drone.
+    // Shutdown runs on the game thread on loader 1.22 and later; anywhere
+    // else, leave the live drone alone.
     if (GetCurrentThreadId() == g_gameThreadId.load(std::memory_order_relaxed))
     {
         try
         {
-            SDK::USphereComponent* sphere = LiveDroneSphere();
-            if (sphere && std::fabs(sphere->SphereRadius - g_drone.origSphereRadius) > 0.01f)
-                sphere->SetSphereRadius(g_drone.origSphereRadius, true);
+            RestoreDroneBody();
         }
         catch (...) {}
+    }
+    else
+    {
+        g_sizedSphere.Reset();
     }
 
     *g_drone.speedPerSec   = g_drone.origSpeedPerSec;
@@ -259,7 +366,6 @@ void RestoreCDODefaults()
     *g_drone.warningRadius = g_drone.origWarningRadius;
     *g_drone.maxHeight     = g_drone.origMaxHeight;
     *g_drone.warningHeight = g_drone.origWarningHeight;
-    *g_drone.sphereRadius  = g_drone.origSphereRadius;
 
     LOG_DEBUG("RestoreCDODefaults: speed=%.0f maxRadius=%.0f maxHeight=%.0f sphereRadius=%.0f",
         g_drone.origSpeedPerSec, g_drone.origMaxRadius, g_drone.origMaxHeight, g_drone.origSphereRadius);
@@ -316,7 +422,6 @@ void UpdateActiveDrones()
         settings->BuildingDroneWarningRadius    = *g_drone.warningRadius;
         settings->BuildingDroneMaxHeight        = *g_drone.maxHeight;
         settings->BuildingDroneWarningHeight    = *g_drone.warningHeight;
-        settings->BuildingDroneSphereRadius     = *g_drone.sphereRadius;
         ++updated;
     }
 
@@ -405,12 +510,7 @@ void OnDroneTick(float deltaSeconds)
 
     bool needsInstanceUpdate = false;
 
-    float sphereRadius = 0.0f;
-    if (g_pendingSphere.TakeIfPending(&sphereRadius))
-    {
-        *g_drone.sphereRadius = sphereRadius;
-        g_sphereLogPending = true;
-    }
+    g_pendingSphere.TakeIfPending(&g_droneSizeCm);
 
     if (g_pendingUpdateDrones.exchange(false, std::memory_order_relaxed))
     {
@@ -436,33 +536,28 @@ void OnDroneTick(float deltaSeconds)
     if (justEnteredDrone)
     {
         needsInstanceUpdate = true;
-        g_sphereLogPending = true;
 
         // Picks up an in-game rebind of Sprint made mid-session.
         if (g_boostFollowsSprint.load(std::memory_order_relaxed))
             ResolveAndCacheSprintKey();
     }
+    // A drone that stays around after the player leaves it goes back to
+    // the game's size and mass until the next launch.
+    if (!inDrone && g_wasInDrone)
+        RestoreDroneBody();
     g_wasInDrone = inDrone;
 
-    // BeginPlay applies the radius to a drone as it spawns; this resizes one
-    // that is already out. Reading the sphere each tick also covers a spawn
-    // that lands after the launch edge.
+    // Each drone spawns at the stock radius and is resized here, on its
+    // first tick out and whenever Drone Size changes. Reading the sphere
+    // each tick also covers a spawn that lands after the launch edge.
     if (inDrone)
     {
         SDK::USphereComponent* sphere = LiveDroneSphere();
         if (sphere)
         {
-            const float wanted = *g_drone.sphereRadius;
-            if (std::fabs(sphere->SphereRadius - wanted) > 0.01f)
-                sphere->SetSphereRadius(wanted, true);
-
-            // Temporary diagnostic, once per launch or setting change.
-            if (g_sphereLogPending)
-            {
-                g_sphereLogPending = false;
-                LOG_INFO("Drone Size: live drone sphere radius %.1f cm (setting %.1f, stock %.1f)",
-                    sphere->SphereRadius, wanted, g_drone.origSphereRadius);
-            }
+            if (std::fabs(sphere->SphereRadius - g_droneSizeCm) > 0.01f)
+                ResizeDroneSphere(sphere, g_droneSizeCm);
+            TickDroneSizeProbe(sphere);
         }
     }
 
