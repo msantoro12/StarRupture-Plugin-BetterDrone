@@ -4,6 +4,7 @@
 #include "drone_wave_patch.h"
 #include "drone_audio.h"
 #include "drone_floor_guard.h"
+#include "drone_hit_probe.h"
 #include "drone_laser.h"
 #include "drone_map_marker.h"
 #include "plugin_helpers.h"
@@ -64,6 +65,7 @@ static void OnEngineTick(float deltaSeconds)
 {
     OnDroneTick(deltaSeconds);
     TickDroneFloorGuard(deltaSeconds);
+    TickDroneHitProbe();
     DroneAudio::Tick(deltaSeconds);
     TickDroneLaser(deltaSeconds);
     TickDroneMenuClose();

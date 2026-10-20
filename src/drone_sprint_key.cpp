@@ -14,15 +14,14 @@ namespace
     // Plain data reads only (GObjects walk, IsA, TArray indexing) -- no
     // UFunction call, so nothing here can hit the null-Func crash class
     // described below.
-    SDK::UInputAction* FindSprintInputAction()
+    SDK::UInputAction* FindInputActionFor(const SDK::UClass* handlerClass)
     {
         auto* objects = SDK::UObject::GObjects.GetTypedPtr();
         if (!objects)
             return nullptr;
 
-        const SDK::UClass* configClass        = SDK::UCrInputConfig::StaticClass();
-        const SDK::UClass* sprintHandlerClass = SDK::UCrInputSprint::StaticClass();
-        if (!configClass || !sprintHandlerClass)
+        const SDK::UClass* configClass = SDK::UCrInputConfig::StaticClass();
+        if (!configClass || !handlerClass)
             return nullptr;
 
         const int32_t count = objects->Num();
@@ -38,7 +37,7 @@ namespace
             {
                 const SDK::FCrNativeInputAction& entry = config->NativeInputActionsWithHandlers[j];
                 if (entry.InputAction && entry.NativeInputHandler &&
-                    entry.NativeInputHandler->IsA(sprintHandlerClass))
+                    entry.NativeInputHandler->IsA(handlerClass))
                     return entry.InputAction;
             }
         }
@@ -57,7 +56,7 @@ namespace
 // which try/catch cannot catch, crashing the game every time boost tried to
 // follow Sprint. EnhancedActionMappings is data on an object already in
 // hand, so no UFunction call -- and no version of this crash -- is possible.
-int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize)
+int ResolveInputHandlerVk(const SDK::UClass* handlerClass, char* outKeyName, size_t outKeyNameSize)
 {
     if (outKeyName && outKeyNameSize > 0)
         outKeyName[0] = '\0';
@@ -78,17 +77,17 @@ int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize)
 
         auto* enhancedInput = static_cast<SDK::UEnhancedPlayerInput*>(playerInput);
 
-        SDK::UInputAction* sprintAction = FindSprintInputAction();
-        if (!sprintAction)
+        SDK::UInputAction* action = FindInputActionFor(handlerClass);
+        if (!action)
             return 0;
 
-        // The live applied mappings, so an in-game Sprint rebind shows up
+        // The live applied mappings, so an in-game rebind shows up
         // here without any extra work on this plugin's part.
         const int32_t mappingCount = enhancedInput->EnhancedActionMappings.Num();
         for (int32_t i = 0; i < mappingCount; ++i)
         {
             const SDK::FEnhancedActionKeyMapping& mapping = enhancedInput->EnhancedActionMappings[i];
-            if (mapping.Action != sprintAction)
+            if (mapping.Action != action)
                 continue;
 
             const std::string name = mapping.Key.KeyName.ToString();
@@ -106,4 +105,9 @@ int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize)
     }
 
     return 0;
+}
+
+int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize)
+{
+    return ResolveInputHandlerVk(SDK::UCrInputSprint::StaticClass(), outKeyName, outKeyNameSize);
 }

@@ -1,6 +1,8 @@
 #pragma once
 #include <cstddef>
 
+namespace SDK { class UClass; }
+
 // Resolves the boost key's default binding: whatever the game's own Sprint
 // action is currently mapped to, so boost never needs its own default key.
 //
@@ -14,3 +16,9 @@
 //
 // Game-thread only, and safe to call before a world exists.
 int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize);
+
+// The same resolution for any native input handler class (a subclass of
+// UCrNativeInputHandler, e.g. UCrInputNativeDroneMoveUp): the first keyboard
+// or mouse key currently applied to that handler's UInputAction, as a VK code.
+// Returns 0 on failure. Game-thread only.
+int ResolveInputHandlerVk(const SDK::UClass* handlerClass, char* outKeyName, size_t outKeyNameSize);
