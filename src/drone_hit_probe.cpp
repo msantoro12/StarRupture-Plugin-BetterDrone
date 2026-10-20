@@ -2,7 +2,6 @@
 #include "drone_interact.h"
 #include "drone_key_vk.h"
 #include "drone_sprint_key.h"
-#include "object_ref.h"
 #include "plugin_helpers.h"
 #include <Chimera_classes.hpp>
 #include <Engine_classes.hpp>
@@ -25,14 +24,16 @@ namespace
     constexpr uint64_t k_stuckMs = 300;
     constexpr double   k_stuckSpeedCmPerSec = 20.0;
 
+    // A drone key the game had not mapped yet is looked up again this often.
+    constexpr uint64_t k_keyRetryMs = 1000;
+
     bool     g_wasInDrone = false;
+    bool     g_bodyLogged = false;
     int      g_upVk = 0;
     int      g_downVk = 0;
+    uint64_t g_keysResolvedMs = 0;
     uint64_t g_heldSinceMs = 0;
     uint64_t g_noHitLoggedMs = 0;
-
-    // The drone whose body has been logged, so it is logged once per drone.
-    ObjectRef<SDK::ACrCharacterDroneBase> g_loggedDrone;
 
     // GObjects index of a logged component -> when it was last logged.
     std::unordered_map<int32_t, uint64_t> g_lastLoggedMs;
@@ -183,9 +184,7 @@ namespace
         const SDK::TArray<SDK::AActor*> ignore(ignoreData, 1, 1);
         const SDK::FLinearColor colour{};
 
-        // A named profile sweeps exactly as the drone body collides. A custom
-        // one has no name to look up, so sweep for the usual object types and
-        // let the logged responses tell which of them would really block.
+        // A named profile sweeps exactly as the drone body collides.
         const SDK::FName profile = sphere->GetCollisionProfileName();
         if (profile.ToString() != "Custom")
         {
@@ -193,17 +192,44 @@ namespace
                 false, ignore, SDK::EDrawDebugTrace::None, hit, true, colour, colour, 0.0f) && hit->bBlockingHit;
         }
 
+        // A custom profile has no name to look up. An object-type sweep counts
+        // every shape of those types as a hit, triggers included, so take all
+        // of them and keep the nearest that blocks the drone both ways. The
+        // engine allocates the result array; it is freed here.
+        IPluginSelf* self = GetSelf();
+        if (!self || !self->hooks || !self->hooks->Memory || !self->hooks->Memory->IsAllocatorAvailable())
+            return false;
+
         SDK::EObjectTypeQuery typeData[6] = {
             SDK::EObjectTypeQuery::ObjectTypeQuery1, SDK::EObjectTypeQuery::ObjectTypeQuery2,
             SDK::EObjectTypeQuery::ObjectTypeQuery3, SDK::EObjectTypeQuery::ObjectTypeQuery4,
             SDK::EObjectTypeQuery::ObjectTypeQuery5, SDK::EObjectTypeQuery::ObjectTypeQuery6 };
         const SDK::TArray<SDK::EObjectTypeQuery> types(typeData, 6, 6);
-        return SDK::UKismetSystemLibrary::SphereTraceSingleForObjects(character, start, end, radius, types,
-            false, ignore, SDK::EDrawDebugTrace::None, hit, true, colour, colour, 0.0f) && hit->bBlockingHit;
+        SDK::TArray<SDK::FHitResult> hits;
+        SDK::UKismetSystemLibrary::SphereTraceMultiForObjects(character, start, end, radius, types,
+            false, ignore, SDK::EDrawDebugTrace::None, &hits, true, colour, colour, 0.0f);
+
+        const SDK::ECollisionChannel droneType = sphere->GetCollisionObjectType();
+        bool found = false;
+        for (int32_t i = 0; i < hits.Num() && !found; ++i)
+        {
+            SDK::UPrimitiveComponent* comp = hits[i].Component.Get();
+            if (comp &&
+                comp->GetCollisionResponseToChannel(droneType) == SDK::ECollisionResponse::ECR_Block &&
+                sphere->GetCollisionResponseToChannel(comp->GetCollisionObjectType()) == SDK::ECollisionResponse::ECR_Block)
+            {
+                *hit = hits[i];
+                found = true;
+            }
+        }
+
+        if (hits.GetDataPtr())
+            self->hooks->Memory->Free(const_cast<SDK::FHitResult*>(hits.GetDataPtr()));
+        return found;
     }
 
-    void LogHit(const SDK::FHitResult& hit, SDK::UPrimitiveComponent* comp, SDK::USphereComponent* sphere,
-                const char* direction, uint64_t now)
+    void LogHit(const SDK::FHitResult& hit, SDK::UPrimitiveComponent* comp, SDK::ACrCharacterDroneBase* drone,
+                SDK::USphereComponent* sphere, const char* direction, uint64_t now)
     {
         uint64_t& last = g_lastLoggedMs[comp->Index];
         if (last != 0 && now - last < k_throttleMs)
@@ -214,10 +240,11 @@ namespace
         const SDK::ECollisionChannel droneType = sphere->GetCollisionObjectType();
         const SDK::ECollisionChannel hitType = comp->GetCollisionObjectType();
         const SDK::FVector at = sphere->K2_GetComponentLocation();
-        LOG_INFO("DroneHitProbe: flying %s, blocked by actor %s (%s), component %s (%s) item %d; "
+        const SDK::FVector velocity = drone->GetVelocity();
+        LOG_INFO("DroneHitProbe: flying %s (held %.1f s, vertical speed %.1f cm/s), in the way: actor %s (%s), component %s (%s) item %d; "
                  "collision %s, object type %s, profile %s, its response to the drone (%s) %s, drone's response to it %s; "
                  "normal (%.2f %.2f %.2f) at (%.1f %.1f %.1f), distance %.1f%s; drone at (%.1f %.1f %.1f) radius %.1f",
-            direction,
+            direction, (now - g_heldSinceMs) / 1000.0, velocity.Z,
             owner ? owner->GetName().c_str() : "none", owner ? owner->Class->GetName().c_str() : "-",
             comp->GetName().c_str(), comp->Class->GetName().c_str(), hit.Item,
             EnabledName(comp->GetCollisionEnabled()), ChannelName(hitType).c_str(),
@@ -230,18 +257,33 @@ namespace
             at.X, at.Y, at.Z, sphere->GetScaledSphereRadius());
     }
 
+    // Looks the drone's Up and Down keys up from the game's own mappings.
+    // Logged on the first try of a launch and when a missing key turns up.
+    void ResolveKeys(bool firstTry)
+    {
+        char upName[64] = {}, downName[64] = {};
+        const int upVk   = ResolveInputHandlerVk(SDK::UCrInputNativeDroneMoveUp::StaticClass(), upName, sizeof(upName));
+        const int downVk = ResolveInputHandlerVk(SDK::UCrInputNativeDroneMoveDown::StaticClass(), downName, sizeof(downName));
+        const bool changed = upVk != g_upVk || downVk != g_downVk;
+        g_upVk   = upVk;
+        g_downVk = downVk;
+        g_keysResolvedMs = GetTickCount64();
+        if (firstTry || changed)
+        {
+            LOG_INFO("DroneHitProbe: drone up key %s, down key %s",
+                upName[0] ? upName : "(not found)", downName[0] ? downName : "(not found)");
+        }
+    }
+
     void StartLaunch()
     {
         g_lastLoggedMs.clear();
-        g_loggedDrone.Reset();
+        g_bodyLogged = false;
         g_heldSinceMs = 0;
         g_noHitLoggedMs = 0;
-
-        char upName[64] = {}, downName[64] = {};
-        g_upVk   = ResolveInputHandlerVk(SDK::UCrInputNativeDroneMoveUp::StaticClass(), upName, sizeof(upName));
-        g_downVk = ResolveInputHandlerVk(SDK::UCrInputNativeDroneMoveDown::StaticClass(), downName, sizeof(downName));
-        LOG_INFO("DroneHitProbe: drone up key %s, down key %s",
-            upName[0] ? upName : "(not found)", downName[0] ? downName : "(not found)");
+        g_upVk = 0;
+        g_downVk = 0;
+        ResolveKeys(true);
     }
 
     bool KeyHeld(int vk)
@@ -265,11 +307,14 @@ void TickDroneHitProbe()
     if (!sphere)
         return;
 
-    if (g_loggedDrone.Get() != drone)
+    if (!g_bodyLogged)
     {
-        g_loggedDrone.Set(drone);
+        g_bodyLogged = true;
         LogDroneBody(drone, sphere);
     }
+
+    if ((g_upVk == 0 || g_downVk == 0) && GetTickCount64() - g_keysResolvedMs >= k_keyRetryMs)
+        ResolveKeys(false);
 
     const bool focused = GameHasFocus();
     const bool up   = focused && KeyHeld(g_upVk);
@@ -289,7 +334,7 @@ void TickDroneHitProbe()
     {
         if (SDK::UPrimitiveComponent* comp = hit.Component.Get())
         {
-            LogHit(hit, comp, sphere, up ? "up" : "down", now);
+            LogHit(hit, comp, drone, sphere, up ? "up" : "down", now);
             return;
         }
     }
