@@ -288,11 +288,13 @@ namespace
             if (!IsStockSize(sphere->SphereRadius))
                 sphere->SetSphereRadius(g_drone.origSphereRadius, true);
 
+            // Setting the mass the way it already is makes the body work
+            // its mass out again, so the read below is the stock shape's.
             g_sizedSphere.Set(sphere);
-            g_stockBody.massKg     = sphere->GetMass();
             g_stockBody.overrideKg = sphere->BodyInstance.MassInKgOverride;
-            g_stockBody.overridden = g_stockBody.massKg > 0.0f &&
-                std::fabs(g_stockBody.overrideKg - g_stockBody.massKg) <= 0.001f * g_stockBody.massKg;
+            g_stockBody.overridden = sphere->BodyInstance.bOverrideMass;
+            SetStockMassSetting(sphere);
+            g_stockBody.massKg = sphere->GetMass();
         }
 
         if (!g_sizeProbe.pending)
@@ -301,10 +303,11 @@ namespace
             g_sizeProbe.massBefore = sphere->GetMass();
         }
 
-        // Back to the game's own mass setting first, so the probe reads the
-        // mass the new shape gets by itself.
-        SetStockMassSetting(sphere);
+        // The game's own mass setting, applied after the resize so the body
+        // works its mass out from the new shape: the probe reads the mass
+        // that shape gets by itself.
         sphere->SetSphereRadius(radiusCm, true);
+        SetStockMassSetting(sphere);
         g_sizeProbe.massAfterResize = sphere->GetMass();
         g_sizeProbe.lastResizeMs    = GetTickCount64();
 
@@ -355,10 +358,6 @@ void RestoreCDODefaults()
             RestoreDroneBody();
         }
         catch (...) {}
-    }
-    else
-    {
-        g_sizedSphere.Reset();
     }
 
     *g_drone.speedPerSec   = g_drone.origSpeedPerSec;
