@@ -66,6 +66,13 @@ namespace DroneConfig
         static void  PersistPanel(PanelFloat id);
         static float WritePanel(PanelFloat id, float value);
 
+        // Called once the drone settings CDO is found, with the game's own
+        // values read before BetterDrone changed anything. Speed, MaxRadius
+        // and MaxHeight that the panel file does not hold take these as
+        // their value. Cache only: nothing is written to the file, so they
+        // keep following the game until the player sets one.
+        static void AdoptGameDefaults(float speedPerSec, float maxRadius, float maxHeight);
+
         static float ReadSpeedPerSec();
         static float ReadMaxRadius();
         static float ReadMaxHeight();

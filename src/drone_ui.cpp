@@ -854,7 +854,7 @@ namespace
         };
 
         for (const PanelSettings::SpeedPreset& p : PanelSettings::kSpeedPresets)
-            add(p.label, false, { p.speedPerSec, p.boostMultiplier, p.acceleration, p.deceleration });
+            add(p.label, false, PanelSettings::SpeedValuesOf(p));
 
         char names[kMaxSavedPresetsListed][PresetStore::kMaxNameLen];
         const int savedCount = PresetStore::ListNames(kSpeedGroup, names, kMaxSavedPresetsListed);
@@ -1164,12 +1164,13 @@ void RenderDronePanel(IModLoaderImGui* ui)
         }
         if (ui->IsItemHovered())
         {
+            const PanelSettings::SpeedValues v = PanelSettings::SpeedValuesOf(preset);
             char tooltipBuf[320];
-            float kmh = preset.speedPerSec * 0.036f;
-            float mph = preset.speedPerSec * 0.0223693629f;
+            float kmh = v.speedPerSec * 0.036f;
+            float mph = v.speedPerSec * 0.0223693629f;
             snprintf(tooltipBuf, sizeof(tooltipBuf),
                 "%s\n\nSpeed: %.1f km/h (%.1f mph | %.0f cm/s) | Boost: %.1fx | Accel: %.0f%s%s",
-                preset.tooltip, kmh, mph, preset.speedPerSec, preset.boostMultiplier, preset.acceleration,
+                preset.tooltip, kmh, mph, v.speedPerSec, v.boostMultiplier, v.acceleration,
                 preset.credit ? "\n\n" : "", preset.credit ? preset.credit : "");
             ui->SetTooltip(tooltipBuf);
         }
@@ -1275,11 +1276,12 @@ void RenderDronePanel(IModLoaderImGui* ui)
         }
         if (ui->IsItemHovered())
         {
+            const PanelSettings::RangeValues v = PanelSettings::RangeValuesOf(preset);
             char tooltipBuf[320];
             snprintf(tooltipBuf, sizeof(tooltipBuf),
                 "%s\n\nRange: %.0f m H / %.0f m V (%.0f ft H / %.0f ft V)%s%s",
-                preset.tooltip, preset.maxRadius / 100.0f, preset.maxHeight / 100.0f,
-                preset.maxRadius * 0.0328084f, preset.maxHeight * 0.0328084f,
+                preset.tooltip, v.maxRadius / 100.0f, v.maxHeight / 100.0f,
+                v.maxRadius * 0.0328084f, v.maxHeight * 0.0328084f,
                 preset.credit ? "\n\n" : "", preset.credit ? preset.credit : "");
             ui->SetTooltip(tooltipBuf);
         }

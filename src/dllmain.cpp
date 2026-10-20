@@ -44,6 +44,8 @@ static void OnEngineInit()
     LOG_DEBUG("OnEngineInit: CDO defaults — speed=%.0f maxRadius=%.0f maxHeight=%.0f",
         *g_drone.speedPerSec, *g_drone.maxRadius, *g_drone.maxHeight);
 
+    DroneConfig::Config::AdoptGameDefaults(g_drone.origSpeedPerSec, g_drone.origMaxRadius, g_drone.origMaxHeight);
+
     *g_drone.speedPerSec   = DroneConfig::Config::ReadSpeedPerSec();
     *g_drone.maxRadius     = DroneConfig::Config::ReadMaxRadius();
     *g_drone.maxHeight     = DroneConfig::Config::ReadMaxHeight();

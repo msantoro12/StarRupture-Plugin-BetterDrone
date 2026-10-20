@@ -24,14 +24,14 @@ Opens with **F10** (rebindable on the loader's Config page, Controls), the **BET
 
 | Preset | Speed (cm/s) | Boost | Accel / decel (cm/s²) | Max Radius (cm) | Max Height (cm) |
 |---|---|---|---|---|---|
-| Stock | 1000 | 2x | 4000 | 5000 | 2000 |
+| Stock | game's own (400) | 2x | 4000 | game's own (4000) | game's own (3500) |
 | Better Construction | 2500 | 2.5x | 5000 | 10000 | 5000 |
 | Agile Builder | 4000 | 3x | 10000 | 20000 | 10000 |
 | Long Haul | 5000 | 3x | 12000 | | |
 | Ludicrous Speed | 8000 | 4x | 20000 | | |
 | Map-wide | | | | 1000000 | 500000 |
 
-Speed presets cover the first three columns, range presets the last two. Better Construction and Map-wide follow CrazyCovin's Better Construction Drone mod.
+Speed presets cover the first three columns, range presets the last two. Stock reads the game's own speed and range when the game starts; the game has no boost or ramp, so those are BetterDrone's. Better Construction and Map-wide follow CrazyCovin's Better Construction Drone mod.
 
 ### Boost <sup>[✦](#msantoro12)</sup>
 
@@ -103,9 +103,9 @@ Panel values are saved to `Plugins\config\BetterDrone-Panel.ini`, clamped to the
 
 | Section | Key | Range | Default |
 |---|---|---|---|
-| `[Drone]` | `SpeedPerSec` | 1 to 20000 cm/s | `1000` |
-| `[Drone]` | `MaxRadius` | 100 to 1000000 cm | `5000` |
-| `[Drone]` | `MaxHeight` | 100 to 500000 cm | `2000` |
+| `[Drone]` | `SpeedPerSec` | 1 to 20000 cm/s | the game's own (400) |
+| `[Drone]` | `MaxRadius` | 100 to 1000000 cm | the game's own (4000) |
+| `[Drone]` | `MaxHeight` | 100 to 500000 cm | the game's own (3500) |
 | `[Drone]` | `SphereRadius` | 20 to 50 cm | `50` |
 | `[Controls]` | `BoostMultiplier` | 1 to 10 | `2` |
 | `[Controls]` | `Acceleration`, `Deceleration` | 4000 to 50000 cm/s² | `4000` |

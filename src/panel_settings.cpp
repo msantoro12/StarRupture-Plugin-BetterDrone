@@ -78,6 +78,24 @@ namespace PanelSettings
             Commit(DroneConfig::AudioVolumeId(i));
     }
 
+    namespace
+    {
+        float OrGame(float value, float gameValue)
+        {
+            return value == kGameValue ? gameValue : value;
+        }
+    }
+
+    SpeedValues SpeedValuesOf(const SpeedPreset& p)
+    {
+        return { OrGame(p.speedPerSec, g_drone.origSpeedPerSec), p.boostMultiplier, p.acceleration, p.deceleration };
+    }
+
+    RangeValues RangeValuesOf(const RangePreset& p)
+    {
+        return { OrGame(p.maxRadius, g_drone.origMaxRadius), OrGame(p.maxHeight, g_drone.origMaxHeight) };
+    }
+
     int MatchingSpeedPreset()
     {
         const SpeedValues live = {
@@ -86,8 +104,7 @@ namespace PanelSettings
 
         for (int i = 0; i < kSpeedPresetCount; ++i)
         {
-            const SpeedPreset& p = kSpeedPresets[i];
-            if (SpeedValuesEqual(live, { p.speedPerSec, p.boostMultiplier, p.acceleration, p.deceleration }))
+            if (SpeedValuesEqual(live, SpeedValuesOf(kSpeedPresets[i])))
                 return i;
         }
         return -1;
@@ -100,7 +117,7 @@ namespace PanelSettings
 
         for (int i = 0; i < kRangePresetCount; ++i)
         {
-            const RangePreset& p = kRangePresets[i];
+            const RangeValues p = RangeValuesOf(kRangePresets[i]);
             if (std::fabs(radius - p.maxRadius) <= kActiveEpsilon &&
                 std::fabs(height - p.maxHeight) <= kActiveEpsilon)
                 return i;
@@ -112,14 +129,16 @@ namespace PanelSettings
     {
         if (!g_drone.valid) return;
 
-        ApplySpeed(preset.speedPerSec, preset.boostMultiplier, preset.acceleration, preset.deceleration);
+        const SpeedValues v = SpeedValuesOf(preset);
+        ApplySpeed(v.speedPerSec, v.boostMultiplier, v.acceleration, v.deceleration);
     }
 
     void ApplyRangePreset(const RangePreset& preset)
     {
         if (!g_drone.valid) return;
 
-        ApplyRange(preset.maxRadius, preset.maxHeight);
+        const RangeValues v = RangeValuesOf(preset);
+        ApplyRange(v.maxRadius, v.maxHeight);
     }
 
     void ApplySpeed(float speedPerSec, float boostMultiplier, float acceleration, float deceleration)

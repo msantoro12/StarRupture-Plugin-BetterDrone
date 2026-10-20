@@ -84,13 +84,25 @@ namespace PanelSettings
         float maxHeight;
     };
 
+    struct RangeValues
+    {
+        float maxRadius;
+        float maxHeight;
+    };
+
+    // Stands in for a preset field that takes the game's own value, read
+    // from the drone settings CDO before BetterDrone changes it
+    // (DroneSettings::orig*). Read a preset through SpeedValuesOf or
+    // RangeValuesOf, never through these fields directly.
+    inline constexpr float kGameValue = -1.0f;
+
     inline constexpr SpeedPreset kSpeedPresets[] = {
         { "Stock",
-          "Default un-modded StarRupture building drone speed.",
+          "The game's own drone speed. The game has no boost or ramp; those are BetterDrone's defaults.",
           "Game Default",
           // 4000.0f matches DroneConfig's own accel/decel floor (drone_config.cpp,
           // kMinAccelDecel) rather than 0, which no longer means instant.
-          1000.0f, 2.0f, 4000.0f, 4000.0f },
+          kGameValue, 2.0f, 4000.0f, 4000.0f },
 
         { "Better Construction",
           "Modelled on 'Better Construction Drone' by CrazyCovin -- 2.5x speed & fast acceleration.",
@@ -130,9 +142,9 @@ namespace PanelSettings
     // exactly at that ceiling.
     inline constexpr RangePreset kRangePresets[] = {
         { "Stock",
-          "Default un-modded StarRupture building drone range.",
+          "The game's own drone range.",
           "Game Default",
-          5000.0f, 2000.0f },
+          kGameValue, kGameValue },
 
         { "Better Construction",
           "Modelled on 'Better Construction Drone' by CrazyCovin -- double range.",
@@ -150,6 +162,11 @@ namespace PanelSettings
           1000000.0f, 500000.0f }
     };
     inline constexpr int kRangePresetCount = static_cast<int>(std::size(kRangePresets));
+
+    // A built-in preset's values, with each kGameValue field resolved to the
+    // game's own value.
+    SpeedValues SpeedValuesOf(const SpeedPreset& preset);
+    RangeValues RangeValuesOf(const RangePreset& preset);
 
     // The index of the built-in preset whose values equal the current ones,
     // or -1 when they match none ("Custom").
