@@ -308,6 +308,12 @@ namespace
     }
 }
 
+float SpeedInPanelUnit(float cmPerSec, char* unit, int unitSize)
+{
+    DroneConfig::Config::ReadSpeedUnit(unit, unitSize);
+    return cmPerSec * kSpeedScale[SelectUnitIndex(unit)].factor;
+}
+
 static void OnToggleKeyPressed(EModKey, EModKeyEvent event)
 {
     if (event == EModKeyEvent::Pressed)
@@ -1206,6 +1212,12 @@ void RenderDronePanel(IModLoaderImGui* ui)
     ui->SameLine(0.0f, 10.0f);
     if (ui->RadioButton("cm/s (Engine)##unit_cms", unitIdx == kUnitCms))
         DroneConfig::Config::WriteSpeedUnit("cm/s");
+
+    bool speedometer = DroneConfig::Config::ReadSpeedometer();
+    if (ui->Checkbox("Speedometer##hud_speedometer", &speedometer))
+        DroneConfig::Config::WriteSpeedometer(speedometer);
+    if (ui->IsItemHovered())
+        ui->SetTooltip("Shows the drone's speed on the drone HUD, under the distance readout, in the unit above.");
 
     ui->Spacing();
 

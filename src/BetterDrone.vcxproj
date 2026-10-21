@@ -109,6 +109,7 @@
     <ClCompile Include="drone_ui.cpp" />
     <ClCompile Include="drone_wave_patch.cpp" />
     <ClCompile Include="drone_map_marker.cpp" />
+    <ClCompile Include="drone_speedometer.cpp" />
     <ClCompile Include="drone_laser.cpp" />
     <ClCompile Include="drone_laser_fx.cpp" />
     <ClCompile Include="drone_heat_display.cpp" />
@@ -138,6 +139,7 @@
     <ClInclude Include="drone_ui.h" />
     <ClInclude Include="drone_wave_patch.h" />
     <ClInclude Include="drone_map_marker.h" />
+    <ClInclude Include="drone_speedometer.h" />
     <ClInclude Include="drone_marker_icon.h" />
     <ClInclude Include="drone_laser.h" />
     <ClInclude Include="drone_laser_fx.h" />

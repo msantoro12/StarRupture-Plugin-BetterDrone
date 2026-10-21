@@ -7,6 +7,10 @@ void ToggleDroneMenu();
 void RebindToggleKey();
 void RenderDronePanel(IModLoaderImGui* imgui);
 
+// `cmPerSec` in the panel's Speed Display Unit. Writes the unit's name
+// ("km/h", "mph" or "cm/s") to `unit`. Any thread.
+float SpeedInPanelUnit(float cmPerSec, char* unit, int unitSize);
+
 // The "Previous Preset Key" / "Next Preset Key" hotkeys: while the drone is
 // out they step the speed presets slowest to fastest, with a brief toast.
 void InitDronePresetKeys(IPluginSelf* self);

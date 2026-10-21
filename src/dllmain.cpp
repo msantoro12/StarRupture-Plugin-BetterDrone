@@ -7,6 +7,7 @@
 #include "drone_hit_probe.h"
 #include "drone_laser.h"
 #include "drone_map_marker.h"
+#include "drone_speedometer.h"
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
 #include <windows.h>
@@ -71,6 +72,7 @@ static void OnEngineTick(float deltaSeconds)
     TickDroneMenuClose();
     TickDroneMenuOpen();
     TickDroneMapMarker(deltaSeconds);
+    TickDroneSpeedometer();
     TickDronePresetKeys();
 }
 
@@ -179,6 +181,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     ShutdownWavePatch();
     DroneAudio::Shutdown();
     ShutdownDroneMapMarker(g_self);
+    ShutdownDroneSpeedometer();
     ShutdownDronePresetKeys(g_self);
     ShutdownDroneUI(g_self);
     ShutdownGameSessionTracking(g_self);

@@ -149,6 +149,11 @@ namespace DroneConfig
         constexpr const char* kUnitSection = "UI";
         constexpr const char* kUnitKey     = "SpeedUnit";
 
+        // Panel-file booleans are written as "true"/"false", the loader's own
+        // spelling for its Boolean entries.
+        constexpr const char* kSpeedometerKey = "Speedometer";
+        std::atomic<bool> g_speedometer{ true };
+
         int SpeedUnitIndex(const char* unit)
         {
             for (int i = 0; i < kSpeedUnitCount; ++i)
@@ -376,6 +381,10 @@ namespace DroneConfig
         PanelReadString(kUnitSection, kUnitKey, kSpeedUnits[0], unit, sizeof(unit));
         g_speedUnit.store(SpeedUnitIndex(unit));
 
+        char speedometer[16] = {};
+        PanelReadString(kUnitSection, kSpeedometerKey, "true", speedometer, sizeof(speedometer));
+        g_speedometer.store(_stricmp(speedometer, "false") != 0 && strcmp(speedometer, "0") != 0);
+
         static const ConfigEntry entries[] = {
             { "Drone",       "Always Allow Drone",     ConfigValueType::Boolean, "false",     "Allow the building drone in places it's normally blocked, including wave events.", 0.0f, 1.0f },
             { "Interaction", "Interact In Drone Mode", ConfigValueType::Boolean, "true",      "Opens nearby containers and doors from the drone. The camera does not recenter when the prompt appears.", 0.0f, 1.0f },
@@ -497,6 +506,15 @@ namespace DroneConfig
         std::lock_guard<std::recursive_mutex> lock(g_panelFileMutex);
         g_speedUnit.store(index);
         PanelWriteString(kUnitSection, kUnitKey, kSpeedUnits[index]);
+    }
+
+    bool Config::ReadSpeedometer() { return g_speedometer.load(); }
+
+    void Config::WriteSpeedometer(bool enabled)
+    {
+        std::lock_guard<std::recursive_mutex> lock(g_panelFileMutex);
+        g_speedometer.store(enabled);
+        PanelWriteString(kUnitSection, kSpeedometerKey, enabled ? "true" : "false");
     }
 
     float Config::MaxSpeedPerSec() { return kMaxSpeedPerSec; }
