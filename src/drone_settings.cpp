@@ -314,10 +314,12 @@ namespace
         if (!mesh)
             return;
 
+        // The state first: setting it is what welds the mesh back into the
+        // drone's physics body. Loading a profile writes the state without
+        // rebuilding the body, so it only puts the name back.
+        mesh->SetCollisionEnabled(g_plate.original);
         if (g_plate.namedProfile)
             mesh->SetCollisionProfileName(g_plate.profile, false);
-        if (mesh->GetCollisionEnabled() != g_plate.original)
-            mesh->SetCollisionEnabled(g_plate.original);
     }
 
     // Below the stock radius, takes the mesh out of the physics body and
