@@ -2,6 +2,7 @@
 #include "drone_config.h"
 #include "drone_audio.h"
 #include "drone_floor_guard.h"
+#include "drone_hit_probe.h"
 #include "drone_interact.h"
 #include "drone_sprint_key.h"
 #include "drone_key_vk.h"
@@ -14,6 +15,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <windows.h>
 
 DroneSettings g_drone;
@@ -266,6 +268,21 @@ namespace
     SizeProbe g_sizeProbe;
     constexpr ULONGLONG kSizeProbeSettleMs = 500;
 
+    // The drone's mesh, SM_BuidingDrone, is welded to the sphere's physics
+    // body and blocks the world with a plate about 43 x 48 cm that does not
+    // shrink with Drone Size. Below the stock radius it is the widest part
+    // of the body and catches on edges the sphere would pass, so it leaves
+    // the physics body (keeping its query collision) until the drone is back
+    // at the stock radius. mesh is set only while its collision is changed.
+    struct ChangedPlate
+    {
+        ObjectRef<SDK::UStaticMeshComponent> mesh;
+        SDK::ECollisionEnabled original = SDK::ECollisionEnabled::NoCollision;
+        SDK::FName profile;
+        bool       namedProfile = false;  // profile is a named preset, not Custom
+    };
+    ChangedPlate g_plate;
+
     bool IsStockSize(float radiusCm)
     {
         return std::fabs(radiusCm - g_drone.origSphereRadius) <= 0.01f;
@@ -276,6 +293,60 @@ namespace
     void SetStockMassSetting(SDK::USphereComponent* sphere)
     {
         sphere->SetMassOverrideInKg(SDK::FName(), g_stockBody.overrideKg, g_stockBody.overridden);
+    }
+
+    // Game thread only. Re-resolved on every call, never kept.
+    SDK::ABP_FloatingDrone_C* FloatingDrone(SDK::USphereComponent* sphere)
+    {
+        SDK::AActor* owner = sphere->GetOwner();
+        if (!owner || !owner->IsA(SDK::ABP_FloatingDrone_C::StaticClass()))
+            return nullptr;
+        return static_cast<SDK::ABP_FloatingDrone_C*>(owner);
+    }
+
+    // Gives the mesh back the collision the game gave it. Setting the
+    // collision state renames the profile to Custom, so a named profile is
+    // put back by name. A mesh that is gone needs nothing.
+    void RestorePlate()
+    {
+        SDK::UStaticMeshComponent* mesh = g_plate.mesh.Get();
+        g_plate.mesh.Reset();
+        if (!mesh)
+            return;
+
+        if (g_plate.namedProfile)
+            mesh->SetCollisionProfileName(g_plate.profile, false);
+        if (mesh->GetCollisionEnabled() != g_plate.original)
+            mesh->SetCollisionEnabled(g_plate.original);
+    }
+
+    // Below the stock radius, takes the mesh out of the physics body and
+    // leaves its query collision as it was; at or above it, restores it.
+    void ApplyPlateCollision(SDK::USphereComponent* sphere, float radiusCm)
+    {
+        SDK::ABP_FloatingDrone_C* drone = FloatingDrone(sphere);
+        SDK::UStaticMeshComponent* mesh = drone ? drone->SM_BuidingDrone : nullptr;
+        const bool shrink = mesh && radiusCm < g_drone.origSphereRadius - 0.01f;
+
+        if (!shrink || g_plate.mesh.Get() != mesh)
+            RestorePlate();
+        if (!shrink || g_plate.mesh.Get() == mesh)
+            return;
+
+        const SDK::ECollisionEnabled original = mesh->GetCollisionEnabled();
+        SDK::ECollisionEnabled target;
+        if (original == SDK::ECollisionEnabled::QueryAndPhysics)
+            target = SDK::ECollisionEnabled::QueryOnly;
+        else if (original == SDK::ECollisionEnabled::PhysicsOnly)
+            target = SDK::ECollisionEnabled::NoCollision;
+        else
+            return;  // not part of the physics body to begin with
+
+        g_plate.mesh.Set(mesh);
+        g_plate.original     = original;
+        g_plate.profile      = mesh->GetCollisionProfileName();
+        g_plate.namedProfile = g_plate.profile.ToString() != "Custom";
+        mesh->SetCollisionEnabled(target);
     }
 
     void ResizeDroneSphere(SDK::USphereComponent* sphere, float radiusCm)
@@ -307,6 +378,7 @@ namespace
         // works its mass out from the new shape: the probe reads the mass
         // that shape gets by itself.
         sphere->SetSphereRadius(radiusCm, true);
+        ApplyPlateCollision(sphere, radiusCm);
         SetStockMassSetting(sphere);
         g_sizeProbe.massAfterResize = sphere->GetMass();
         g_sizeProbe.lastResizeMs    = GetTickCount64();
@@ -321,10 +393,26 @@ namespace
             return;
 
         g_sizeProbe.pending = false;
+
+        SDK::ABP_FloatingDrone_C* drone = FloatingDrone(sphere);
+        SDK::UStaticMeshComponent* mesh = drone ? drone->SM_BuidingDrone : nullptr;
+        SDK::UCapsuleComponent* capsule = drone ? drone->Capsule : nullptr;
+        float capsuleRadius = 0.0f, capsuleHalfHeight = 0.0f;
+        if (capsule)
+            capsule->GetScaledCapsuleSize(&capsuleRadius, &capsuleHalfHeight);
+
+        const std::string meshState = !mesh ? std::string("(no mesh)")
+            : g_plate.mesh.Get() == mesh
+                ? std::string(CollisionEnabledName(mesh->GetCollisionEnabled())) + " (changed from " +
+                      CollisionEnabledName(g_plate.original) + ")"
+                : std::string(CollisionEnabledName(mesh->GetCollisionEnabled())) + " (the game's)";
+
         LOG_INFO("DroneSizeProbe: radius %.1f cm, mass %.2f kg before, %.2f kg after the resize alone, "
-                 "%.2f kg applied (stock %.2f kg, game override %s), linear damping %.3f",
+                 "%.2f kg applied (stock %.2f kg, game override %s), linear damping %.3f; "
+                 "mesh collision %s, capsule r=%.1f halfHeight=%.1f",
             sphere->SphereRadius, g_sizeProbe.massBefore, g_sizeProbe.massAfterResize, sphere->GetMass(),
-            g_stockBody.massKg, g_stockBody.overridden ? "yes" : "no", sphere->GetLinearDamping());
+            g_stockBody.massKg, g_stockBody.overridden ? "yes" : "no", sphere->GetLinearDamping(),
+            meshState.c_str(), capsuleRadius, capsuleHalfHeight);
     }
 
     // Puts the drone we resized back as the game made it: the stock radius
@@ -332,6 +420,8 @@ namespace
     // thread only.
     void RestoreDroneBody()
     {
+        RestorePlate();
+
         SDK::USphereComponent* sphere = g_sizedSphere.Get();
         g_sizedSphere.Reset();
         g_sizeProbe.pending = false;

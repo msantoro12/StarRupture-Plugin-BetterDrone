@@ -1,4 +1,5 @@
 #pragma once
+#include <Engine_classes.hpp>
 
 // Temporary diagnostic: what stops the drone flying up through a ladder hole.
 //
@@ -13,3 +14,7 @@
 // Game thread only. Call once per engine tick. Holds no UObject pointer
 // across ticks; its state starts over on each drone launch.
 void TickDroneHitProbe();
+
+
+// The engine's name for a collision-enabled state, for log lines.
+const char* CollisionEnabledName(SDK::ECollisionEnabled enabled);

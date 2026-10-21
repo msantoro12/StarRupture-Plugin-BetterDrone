@@ -11,6 +11,20 @@
 #include <string>
 #include <unordered_map>
 
+const char* CollisionEnabledName(SDK::ECollisionEnabled enabled)
+{
+    switch (static_cast<int>(enabled))
+    {
+    case 0:  return "NoCollision";
+    case 1:  return "QueryOnly";
+    case 2:  return "PhysicsOnly";
+    case 3:  return "QueryAndPhysics";
+    case 4:  return "ProbeOnly";
+    case 5:  return "QueryAndProbe";
+    default: return "?";
+    }
+}
+
 namespace
 {
     // How far ahead of the drone sphere the query sweep looks.
@@ -61,20 +75,6 @@ namespace
         case SDK::ECollisionResponse::ECR_Overlap: return "Overlap";
         case SDK::ECollisionResponse::ECR_Block:   return "Block";
         default:                                   return "?";
-        }
-    }
-
-    const char* EnabledName(SDK::ECollisionEnabled enabled)
-    {
-        switch (static_cast<int>(enabled))
-        {
-        case 0:  return "NoCollision";
-        case 1:  return "QueryOnly";
-        case 2:  return "PhysicsOnly";
-        case 3:  return "QueryAndPhysics";
-        case 4:  return "ProbeOnly";
-        case 5:  return "QueryAndProbe";
-        default: return "?";
         }
     }
 
@@ -158,7 +158,7 @@ namespace
             LOG_INFO("DroneHitProbe: drone part %s (%s) collision %s, profile %s, object type %s, simulating %d, "
                      "attached to %s, %s, responses %s",
                 comp->GetName().c_str(), comp->Class->GetName().c_str(),
-                EnabledName(comp->GetCollisionEnabled()),
+                CollisionEnabledName(comp->GetCollisionEnabled()),
                 comp->GetCollisionProfileName().ToString().c_str(),
                 ChannelName(comp->GetCollisionObjectType()).c_str(),
                 comp->IsSimulatingPhysics(SDK::FName()) ? 1 : 0,
@@ -247,7 +247,7 @@ namespace
             direction, (now - g_heldSinceMs) / 1000.0, velocity.Z,
             owner ? owner->GetName().c_str() : "none", owner ? owner->Class->GetName().c_str() : "-",
             comp->GetName().c_str(), comp->Class->GetName().c_str(), hit.Item,
-            EnabledName(comp->GetCollisionEnabled()), ChannelName(hitType).c_str(),
+            CollisionEnabledName(comp->GetCollisionEnabled()), ChannelName(hitType).c_str(),
             comp->GetCollisionProfileName().ToString().c_str(),
             ChannelName(droneType).c_str(), ResponseName(comp->GetCollisionResponseToChannel(droneType)),
             ResponseName(sphere->GetCollisionResponseToChannel(hitType)),
