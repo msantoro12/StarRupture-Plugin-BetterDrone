@@ -9,6 +9,7 @@
 #include <Engine_classes.hpp>
 #include <UMG_classes.hpp>
 #include <windows.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -91,8 +92,8 @@ namespace
                 continue;
 
             auto* hud = static_cast<SDK::UCrUW_BuildingDroneHud*>(obj);
-            if (!ObjectRef<SDK::UCrUW_BuildingDroneHud>(hud).Get())
-                continue; // being destroyed
+            if (!ObjectRef<SDK::UCrUW_BuildingDroneHud>(hud).Get() || !hud->DistanceValueU)
+                continue; // being destroyed, or not built from the HUD's layout
 
             if (hud->PlayerCharacter == character)
                 return hud;
@@ -102,27 +103,51 @@ namespace
         return unowned;
     }
 
-    // The nearest canvas panel that holds `widget`. A user widget's tree ends
-    // at its root; the walk then carries on from the user widget itself, in
-    // the tree that holds it.
+    // The widget that holds `widget`: the panel it sits in or, at the root of
+    // a user widget's tree, the user widget itself, in the tree that holds
+    // that. Read from fields, as UWidget::GetParent does.
+    SDK::UWidget* HolderOf(SDK::UWidget* widget)
+    {
+        if (widget->Slot && widget->Slot->Parent)
+            return widget->Slot->Parent;
+
+        SDK::UObject* tree  = widget->Outer;
+        SDK::UObject* owner = tree && tree->IsA(SDK::UWidgetTree::StaticClass()) ? tree->Outer : nullptr;
+        return owner && owner->IsA(SDK::UUserWidget::StaticClass()) ? static_cast<SDK::UWidget*>(owner) : nullptr;
+    }
+
+    // The nearest canvas panel that holds `widget`.
     SDK::UCanvasPanel* FindCanvas(SDK::UWidget* widget)
     {
         for (int depth = 0; widget && depth < kMaxTreeDepth; ++depth)
         {
-            SDK::UPanelWidget* parent = widget->GetParent();
-            if (parent)
-            {
-                if (parent->IsA(SDK::UCanvasPanel::StaticClass()))
-                    return static_cast<SDK::UCanvasPanel*>(parent);
-                widget = parent;
-                continue;
-            }
-
-            SDK::UObject* tree  = widget->Outer;
-            SDK::UObject* owner = tree && tree->IsA(SDK::UWidgetTree::StaticClass()) ? tree->Outer : nullptr;
-            widget = owner && owner->IsA(SDK::UUserWidget::StaticClass()) ? static_cast<SDK::UWidget*>(owner) : nullptr;
+            widget = HolderOf(widget);
+            if (widget && widget->IsA(SDK::UCanvasPanel::StaticClass()))
+                return static_cast<SDK::UCanvasPanel*>(widget);
         }
         return nullptr;
+    }
+
+    bool SetToShow(const SDK::UWidget* widget)
+    {
+        return widget->Visibility != SDK::ESlateVisibility::Collapsed &&
+               widget->Visibility != SDK::ESlateVisibility::Hidden;
+    }
+
+    // True when `widget` and everything that holds it, up to `top`, is set to
+    // show. The text may sit in a canvas above the drone HUD, where the HUD
+    // hiding would not hide it.
+    bool ShownUpTo(SDK::UWidget* widget, SDK::UWidget* top)
+    {
+        for (int depth = 0; widget && depth < kMaxTreeDepth; ++depth)
+        {
+            if (widget == top)
+                return true;
+            if (!SetToShow(widget))
+                return false;
+            widget = HolderOf(widget);
+        }
+        return false;
     }
 
     // The readout the speed sits under: the distance digits.
@@ -140,6 +165,9 @@ namespace
     // as the readout is justified. False until the HUD has been laid out.
     bool PlaceUnderReadout(SDK::UCrUW_BuildingDroneHud* hud, SDK::UCanvasPanel* canvas, SDK::FVector2D* out)
     {
+        if (!hud->DistanceValueU || !ShownUpTo(hud->DistanceValueU, canvas))
+            return false;
+
         const SDK::FGeometry canvasGeo = canvas->GetCachedGeometry();
         if (SDK::USlateBlueprintLibrary::GetLocalSize(canvasGeo).X <= 0.0)
             return false;
@@ -151,7 +179,7 @@ namespace
         double left = 0.0, right = 0.0, bottom = 0.0;
         for (SDK::UTextBlock* elem : elems)
         {
-            if (!elem || !elem->IsVisible())
+            if (!elem || !SetToShow(elem))
                 continue;
 
             const SDK::FGeometry geo  = elem->GetCachedGeometry();
@@ -190,11 +218,10 @@ namespace
     std::wstring FormatSpeed(double cmPerSec)
     {
         char unit[16] = {};
-        long value = std::lround(SpeedInPanelUnit(static_cast<float>(cmPerSec), unit, sizeof(unit)));
-        if (value < 0)
-            value = 0;
-        for (long step = 10; value >= 1000 * step / 10; step *= 10)
-            value = (value + step / 2) / step * step;
+        const double inUnit = SpeedInPanelUnit(static_cast<float>(cmPerSec), unit, sizeof(unit));
+        const double clamped = (std::min)((std::max)(inUnit, 0.0), 999999.0);
+        const double step    = clamped >= 10000.0 ? 100.0 : clamped >= 1000.0 ? 10.0 : 1.0;
+        const long   value   = static_cast<long>(std::round(clamped / step) * step);
 
         wchar_t buf[48];
         swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"%ld %hs", value, unit);
@@ -256,6 +283,7 @@ namespace
         text->SetShadowOffset(source->ShadowOffset);
         text->SetShadowColorAndOpacity(source->ShadowColorAndOpacity);
         text->SetJustification(source->Justification);
+        text->SetTextTransformPolicy(source->TextTransformPolicy);
         text->SetVisibility(SDK::ESlateVisibility::Collapsed);
 
         switch (source->Justification)
@@ -308,8 +336,10 @@ void TickDroneSpeedometer()
         hud  = nullptr;
         text = nullptr;
     }
-    else if (!text && hud)
+    else if (!text)
     {
+        // Gone, or never attached: drop both references, so a slot the
+        // engine hands to a new object is never mistaken for ours.
         Forget();
         hud = nullptr;
     }
@@ -356,6 +386,7 @@ void TickDroneSpeedometer()
             {
                 LOG_WARN("Speedometer: drone HUD widget not found; no speedometer");
                 g_loggedMissing = true;
+                g_nextFindMs = UINT64_MAX; // no more scans until the next launch
             }
             return;
         }
