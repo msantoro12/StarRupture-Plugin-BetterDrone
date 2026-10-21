@@ -384,7 +384,15 @@ namespace
         g_sizeProbe.lastResizeMs    = GetTickCount64();
 
         if (!IsStockSize(radiusCm) && g_stockBody.massKg > 0.0f)
+        {
+            // The override sets the sphere's own mass, but the body's total
+            // also counts the parts welded to it. Take their share off once,
+            // so the whole body weighs what it did at the stock radius.
             sphere->SetMassOverrideInKg(SDK::FName(), g_stockBody.massKg, true);
+            const float overrideKg = 2.0f * g_stockBody.massKg - sphere->GetMass();
+            if (overrideKg > 0.0f && std::fabs(overrideKg - g_stockBody.massKg) > 0.01f)
+                sphere->SetMassOverrideInKg(SDK::FName(), overrideKg, true);
+        }
     }
 
     void TickDroneSizeProbe(SDK::USphereComponent* sphere)
