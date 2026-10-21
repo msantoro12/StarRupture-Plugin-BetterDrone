@@ -3,6 +3,7 @@
 #include "drone_key_vk.h"
 #include "drone_sprint_key.h"
 #include "plugin_helpers.h"
+#include <BP_FloatingDrone_classes.hpp>
 #include <Chimera_classes.hpp>
 #include <Engine_classes.hpp>
 #include <windows.h>
@@ -167,6 +168,53 @@ namespace
         }
     }
 
+    // An object-type sweep, for a shape whose profile is Custom and so has no
+    // name to sweep by, covers the first six object types.
+    constexpr int32_t k_objectTypes = 6;
+
+    // Fills storage with those types and returns a view over it. The engine
+    // copies the array before the sweep returns.
+    SDK::TArray<SDK::EObjectTypeQuery> AllObjectTypes(SDK::EObjectTypeQuery (&storage)[k_objectTypes])
+    {
+        for (int32_t i = 0; i < k_objectTypes; ++i)
+            storage[i] = static_cast<SDK::EObjectTypeQuery>(i);
+        return SDK::TArray<SDK::EObjectTypeQuery>(storage, k_objectTypes, k_objectTypes);
+    }
+
+    // The plugin, when its engine allocator can free an array a sweep filled.
+    IPluginSelf* PluginAllocator()
+    {
+        IPluginSelf* self = GetSelf();
+        if (!self || !self->hooks || !self->hooks->Memory || !self->hooks->Memory->IsAllocatorAvailable())
+            return nullptr;
+        return self;
+    }
+
+    // An object-type sweep counts every shape of those types as a hit,
+    // triggers included. Keeps the nearest hit that blocks shape both ways,
+    // and frees the array the engine allocated.
+    bool TakeNearestMutualBlock(IPluginSelf* self, SDK::TArray<SDK::FHitResult>& hits,
+                                SDK::UPrimitiveComponent* shape, SDK::FHitResult* hit)
+    {
+        const SDK::ECollisionChannel shapeType = shape->GetCollisionObjectType();
+        bool found = false;
+        for (int32_t i = 0; i < hits.Num() && !found; ++i)
+        {
+            SDK::UPrimitiveComponent* comp = hits[i].Component.Get();
+            if (comp &&
+                comp->GetCollisionResponseToChannel(shapeType) == SDK::ECollisionResponse::ECR_Block &&
+                shape->GetCollisionResponseToChannel(comp->GetCollisionObjectType()) == SDK::ECollisionResponse::ECR_Block)
+            {
+                *hit = hits[i];
+                found = true;
+            }
+        }
+
+        if (hits.GetDataPtr())
+            self->hooks->Memory->Free(const_cast<SDK::FHitResult*>(hits.GetDataPtr()));
+        return found;
+    }
+
     // A query sweep of the drone sphere from where it is, in the direction it
     // is being flown. Moves nothing. Returns true and fills hit on a blocking
     // hit.
@@ -192,44 +240,62 @@ namespace
                 false, ignore, SDK::EDrawDebugTrace::None, hit, true, colour, colour, 0.0f) && hit->bBlockingHit;
         }
 
-        // A custom profile has no name to look up. An object-type sweep counts
-        // every shape of those types as a hit, triggers included, so take all
-        // of them and keep the nearest that blocks the drone both ways. The
-        // engine allocates the result array; it is freed here.
-        IPluginSelf* self = GetSelf();
-        if (!self || !self->hooks || !self->hooks->Memory || !self->hooks->Memory->IsAllocatorAvailable())
+        // A custom profile has no name to look up: sweep for objects instead.
+        IPluginSelf* self = PluginAllocator();
+        if (!self)
             return false;
 
-        SDK::EObjectTypeQuery typeData[6] = {
-            SDK::EObjectTypeQuery::ObjectTypeQuery1, SDK::EObjectTypeQuery::ObjectTypeQuery2,
-            SDK::EObjectTypeQuery::ObjectTypeQuery3, SDK::EObjectTypeQuery::ObjectTypeQuery4,
-            SDK::EObjectTypeQuery::ObjectTypeQuery5, SDK::EObjectTypeQuery::ObjectTypeQuery6 };
-        const SDK::TArray<SDK::EObjectTypeQuery> types(typeData, 6, 6);
+        SDK::EObjectTypeQuery typeData[k_objectTypes];
         SDK::TArray<SDK::FHitResult> hits;
-        SDK::UKismetSystemLibrary::SphereTraceMultiForObjects(character, start, end, radius, types,
+        SDK::UKismetSystemLibrary::SphereTraceMultiForObjects(character, start, end, radius, AllObjectTypes(typeData),
             false, ignore, SDK::EDrawDebugTrace::None, &hits, true, colour, colour, 0.0f);
+        return TakeNearestMutualBlock(self, hits, sphere, hit);
+    }
 
-        const SDK::ECollisionChannel droneType = sphere->GetCollisionObjectType();
-        bool found = false;
-        for (int32_t i = 0; i < hits.Num() && !found; ++i)
+    // A query sweep of the drone mesh's bounds (start, halfSize), as a box,
+    // upward from where the mesh is. Moves nothing. Returns true and fills hit on a blocking
+    // hit. Shows whether the mesh, wider than a shrunken sphere, is what
+    // catches.
+    bool SweepDroneMesh(SDK::ACrCharacterPlayerBase* character, SDK::ACrCharacterDroneBase* drone,
+                        SDK::UPrimitiveComponent* mesh, const SDK::FVector& start, const SDK::FVector& halfSize,
+                        SDK::FHitResult* hit)
+    {
+        SDK::FVector end = start;
+        end.Z += k_sweepCm;
+
+        // Bounds are world-aligned, so the box is not rotated.
+        SDK::AActor* ignoreData[1] = { drone };
+        const SDK::TArray<SDK::AActor*> ignore(ignoreData, 1, 1);
+        const SDK::FLinearColor colour{};
+        const SDK::FRotator orientation{};
+
+        const SDK::FName profile = mesh->GetCollisionProfileName();
+        if (profile.ToString() != "Custom")
         {
-            SDK::UPrimitiveComponent* comp = hits[i].Component.Get();
-            if (comp &&
-                comp->GetCollisionResponseToChannel(droneType) == SDK::ECollisionResponse::ECR_Block &&
-                sphere->GetCollisionResponseToChannel(comp->GetCollisionObjectType()) == SDK::ECollisionResponse::ECR_Block)
-            {
-                *hit = hits[i];
-                found = true;
-            }
+            return SDK::UKismetSystemLibrary::BoxTraceSingleByProfile(character, start, end, halfSize, orientation,
+                profile, false, ignore, SDK::EDrawDebugTrace::None, hit, true, colour, colour, 0.0f) && hit->bBlockingHit;
         }
 
-        if (hits.GetDataPtr())
-            self->hooks->Memory->Free(const_cast<SDK::FHitResult*>(hits.GetDataPtr()));
-        return found;
+        IPluginSelf* self = PluginAllocator();
+        if (!self)
+            return false;
+
+        SDK::EObjectTypeQuery typeData[k_objectTypes];
+        SDK::TArray<SDK::FHitResult> hits;
+        SDK::UKismetSystemLibrary::BoxTraceMultiForObjects(character, start, end, halfSize, orientation,
+            AllObjectTypes(typeData), false, ignore, SDK::EDrawDebugTrace::None, &hits, true, colour, colour, 0.0f);
+        return TakeNearestMutualBlock(self, hits, mesh, hit);
+    }
+
+    std::string SphereText(SDK::USphereComponent* sphere)
+    {
+        char buf[48] = {};
+        snprintf(buf, sizeof(buf), "drone sphere r=%.1f", sphere->GetScaledSphereRadius());
+        return buf;
     }
 
     void LogHit(const SDK::FHitResult& hit, SDK::UPrimitiveComponent* comp, SDK::ACrCharacterDroneBase* drone,
-                SDK::USphereComponent* sphere, const char* direction, uint64_t now)
+                SDK::UPrimitiveComponent* shape, const std::string& sweptWith, const char* direction, uint64_t now)
     {
         uint64_t& last = g_lastLoggedMs[comp->Index];
         if (last != 0 && now - last < k_throttleMs)
@@ -237,24 +303,24 @@ namespace
         last = now;
 
         SDK::AActor* owner = comp->GetOwner();
-        const SDK::ECollisionChannel droneType = sphere->GetCollisionObjectType();
+        const SDK::ECollisionChannel droneType = shape->GetCollisionObjectType();
         const SDK::ECollisionChannel hitType = comp->GetCollisionObjectType();
-        const SDK::FVector at = sphere->K2_GetComponentLocation();
+        const SDK::FVector at = shape->K2_GetComponentLocation();
         const SDK::FVector velocity = drone->GetVelocity();
         LOG_INFO("DroneHitProbe: flying %s (held %.1f s, vertical speed %.1f cm/s), in the way: actor %s (%s), component %s (%s) item %d; "
                  "collision %s, object type %s, profile %s, its response to the drone (%s) %s, drone's response to it %s; "
-                 "normal (%.2f %.2f %.2f) at (%.1f %.1f %.1f), distance %.1f%s; drone at (%.1f %.1f %.1f) radius %.1f",
+                 "normal (%.2f %.2f %.2f) at (%.1f %.1f %.1f), distance %.1f%s; swept %s from (%.1f %.1f %.1f)",
             direction, (now - g_heldSinceMs) / 1000.0, velocity.Z,
             owner ? owner->GetName().c_str() : "none", owner ? owner->Class->GetName().c_str() : "-",
             comp->GetName().c_str(), comp->Class->GetName().c_str(), hit.Item,
             CollisionEnabledName(comp->GetCollisionEnabled()), ChannelName(hitType).c_str(),
             comp->GetCollisionProfileName().ToString().c_str(),
             ChannelName(droneType).c_str(), ResponseName(comp->GetCollisionResponseToChannel(droneType)),
-            ResponseName(sphere->GetCollisionResponseToChannel(hitType)),
+            ResponseName(shape->GetCollisionResponseToChannel(hitType)),
             hit.ImpactNormal.X, hit.ImpactNormal.Y, hit.ImpactNormal.Z,
             hit.ImpactPoint.X, hit.ImpactPoint.Y, hit.ImpactPoint.Z,
             hit.Distance, hit.bStartPenetrating ? " (started inside it)" : "",
-            at.X, at.Y, at.Z, sphere->GetScaledSphereRadius());
+            sweptWith.c_str(), at.X, at.Y, at.Z);
     }
 
     // Looks the drone's Up and Down keys up from the game's own mappings.
@@ -334,23 +400,46 @@ void TickDroneHitProbe()
     {
         if (SDK::UPrimitiveComponent* comp = hit.Component.Get())
         {
-            LogHit(hit, comp, drone, sphere, up ? "up" : "down", now);
+            LogHit(hit, comp, drone, sphere, SphereText(sphere), up ? "up" : "down", now);
             return;
         }
     }
 
-    // Nothing in the way to a query, yet the drone is not moving: the
-    // blocker is a physics-only shape, or part of the drone wider than the
-    // sphere.
+    // Nothing in the way to a query, yet the drone is not moving (or, flown
+    // up, sinking): the blocker is a physics-only shape, or part of the
+    // drone wider than the sphere.
     const SDK::FVector velocity = drone->GetVelocity();
-    if (now - g_heldSinceMs >= k_stuckMs && std::abs(velocity.Z) < k_stuckSpeedCmPerSec &&
-        (g_noHitLoggedMs == 0 || now - g_noHitLoggedMs >= k_throttleMs))
-    {
-        g_noHitLoggedMs = now;
-        const SDK::FVector at = sphere->K2_GetComponentLocation();
-        LOG_INFO("DroneHitProbe: flying %s, held %.1f s, vertical speed %.1f cm/s, no query-visible blocker "
-                 "within %.0f cm; drone at (%.1f %.1f %.1f) radius %.1f",
-            up ? "up" : "down", (now - g_heldSinceMs) / 1000.0, velocity.Z, k_sweepCm,
-            at.X, at.Y, at.Z, sphere->GetScaledSphereRadius());
-    }
+    const bool stuck = up ? velocity.Z < k_stuckSpeedCmPerSec : std::abs(velocity.Z) < k_stuckSpeedCmPerSec;
+    if (now - g_heldSinceMs < k_stuckMs || !stuck ||
+        (g_noHitLoggedMs != 0 && now - g_noHitLoggedMs < k_throttleMs))
+        return;
+
+    g_noHitLoggedMs = now;
+    const SDK::FVector at = sphere->K2_GetComponentLocation();
+    LOG_INFO("DroneHitProbe: flying %s, held %.1f s, vertical speed %.1f cm/s, no query-visible blocker "
+             "within %.0f cm; drone at (%.1f %.1f %.1f) radius %.1f",
+        up ? "up" : "down", (now - g_heldSinceMs) / 1000.0, velocity.Z, k_sweepCm,
+        at.X, at.Y, at.Z, sphere->GetScaledSphereRadius());
+
+    // The mesh is wider than a shrunken sphere: sweep its bounds as well.
+    if (!up || !drone->IsA(SDK::ABP_FloatingDrone_C::StaticClass()))
+        return;
+    SDK::UStaticMeshComponent* mesh = static_cast<SDK::ABP_FloatingDrone_C*>(drone)->SM_BuidingDrone;
+    if (!mesh)
+        return;
+
+    SDK::FVector origin{}, extent{};
+    float boundsRadius = 0.0f;
+    SDK::UKismetSystemLibrary::GetComponentBounds(mesh, &origin, &extent, &boundsRadius);
+    char meshText[96] = {};
+    snprintf(meshText, sizeof(meshText), "drone mesh %s as a box (%.1f %.1f %.1f)",
+        mesh->GetName().c_str(), extent.X, extent.Y, extent.Z);
+
+    SDK::FHitResult meshHit{};
+    SDK::UPrimitiveComponent* meshBlocker = SweepDroneMesh(character, drone, mesh, origin, extent, &meshHit)
+        ? meshHit.Component.Get() : nullptr;
+    if (meshBlocker)
+        LogHit(meshHit, meshBlocker, drone, mesh, meshText, "up", now);
+    else
+        LOG_INFO("DroneHitProbe: flying up, %s finds no query-visible blocker within %.0f cm either", meshText, k_sweepCm);
 }

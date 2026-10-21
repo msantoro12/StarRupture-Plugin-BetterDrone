@@ -8,7 +8,9 @@
 // on the drone actor with its collision state and shape size. While the
 // drone's Up or Down key is held, sweeps the drone sphere a short way in
 // that direction as a query (nothing is moved) and logs what it would hit.
-// Each blocking component is logged at most once every 2 s. All lines start
+// When nothing is in the sphere's way yet the drone flown up is not rising,
+// also sweeps the drone mesh's bounds upward as a box and logs what that
+// hits. Each blocking component is logged at most once every 2 s. All lines start
 // with "DroneHitProbe:".
 
 // Game thread only. Call once per engine tick. Holds no UObject pointer
