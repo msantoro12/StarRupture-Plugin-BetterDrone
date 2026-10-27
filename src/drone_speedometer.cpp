@@ -217,9 +217,9 @@ namespace
 
     // The visible distance digits, in `panel`'s own units: their right edge
     // and bottom edge, and how much bigger they draw there than in their own
-    // units. The right edge is the last element's, which keeps its place as
-    // the distance gains or loses a digit. False until the HUD has been laid
-    // out.
+    // units. The right edge is the furthest right of the elements, so it keeps
+    // its place as the distance gains or loses a digit. False until the HUD
+    // has been laid out.
     bool DigitsIn(SDK::UCrUW_BuildingDroneHud* hud, SDK::UWidget* panel, double* right, double* bottom, double* scale)
     {
         const SDK::FGeometry panelGeo = panel->GetCachedGeometry();
@@ -447,7 +447,7 @@ namespace
 
         if (!g_loggedAttach)
         {
-            LOG_INFO("Speedometer: under the drone HUD's distance readout, in %s %s at %.0f,%.0f",
+            LOG_INFO("Speedometer: under the drone HUD's distance readout, in %s %s, right edge at %.0f, bottom at %.0f",
                 panel->Class ? panel->Class->GetName().c_str() : "?", panel->GetName().c_str(), right, bottom);
             g_loggedAttach = true;
         }
