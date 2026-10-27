@@ -79,9 +79,9 @@ namespace
     bool           g_attachFailed   = false;   // until the drone is next launched
     bool           g_loggedAttach   = false;   // one line per path, per load
     bool           g_loggedFallback = false;
-    bool           g_textShown      = false;
     float          g_textOpacity    = 1.0f;
     SDK::FVector2D g_position       = {};
+    SDK::FVector2D g_room           = {};      // the text size the panel was checked for
     std::string    g_shownText;
 
     // One FText per string ever shown, built once and kept, as the loader's
@@ -253,34 +253,21 @@ namespace
         return any;
     }
 
-    // The one line that says why the readout's panel was passed over, so the
-    // next attempt starts from facts: each widget from the units digit up,
-    // with its slot and visibility.
-    void LogAncestry(SDK::UWidget* readout)
+    // Why the speed is beside the crosshair, then the readout's ancestry,
+    // one widget per line from the units digit up (a log line has a length
+    // limit), so the next attempt starts from facts.
+    void LogFallback(const char* why, SDK::UWidget* readout)
     {
-        std::string line;
+        LOG_INFO("Speedometer: beside the crosshair: %s", why);
         SDK::UWidget* widget = readout;
-        for (int depth = 0; widget && depth < kMaxTreeDepth; ++depth)
+        for (int depth = 0; widget && depth < kMaxTreeDepth; ++depth, widget = ParentOf(widget))
         {
             const SDK::FVector2D size = SDK::USlateBlueprintLibrary::GetLocalSize(widget->GetCachedGeometry());
-            char sizeText[48];
-            snprintf(sizeText, sizeof(sizeText), " %.0fx%.0f", size.X, size.Y);
-
-            if (!line.empty())
-                line += " < ";
-            line += widget->Class ? widget->Class->GetName() : "?";
-            line += " ";
-            line += widget->GetName();
-            line += " [";
-            line += widget->Slot && widget->Slot->Class ? widget->Slot->Class->GetName() : "no slot";
-            line += ", visibility ";
-            line += std::to_string(static_cast<int>(widget->Visibility));
-            line += sizeText;
-            line += "]";
-            widget = ParentOf(widget);
+            LOG_INFO("Speedometer:   %s %s [%s, visibility %d, opacity %.2f, %.0fx%.0f]",
+                widget->Class ? widget->Class->GetName().c_str() : "?", widget->GetName().c_str(),
+                widget->Slot && widget->Slot->Class ? widget->Slot->Class->GetName().c_str() : "no slot",
+                static_cast<int>(widget->Visibility), widget->RenderOpacity, size.X, size.Y);
         }
-        LOG_INFO("Speedometer: no overlay or canvas panel under the distance readout has room; beside the crosshair instead. Readout ancestry: %s",
-            line.c_str());
     }
 
     const SDK::FText* TextFor(const std::string& s)
@@ -297,9 +284,9 @@ namespace
     {
         g_text.Reset();
         g_panel.Reset();
-        g_textShown   = false;
         g_textOpacity = 1.0f;
         g_position    = {};
+        g_room        = {};
         g_shownText.clear();
     }
 
@@ -321,17 +308,27 @@ namespace
 
     void ShowText(SDK::UTextBlock* text, bool shown)
     {
-        if (g_textShown == shown)
-            return;
-        text->SetVisibility(shown ? SDK::ESlateVisibility::HitTestInvisible : SDK::ESlateVisibility::Collapsed);
-        g_textShown = shown;
+        if (IsShown(text) != shown)
+            text->SetVisibility(shown ? SDK::ESlateVisibility::HitTestInvisible : SDK::ESlateVisibility::Collapsed);
+    }
+
+    // Exactly these classes: a subclass such as CommonUI's visibility
+    // switcher lays its children out differently.
+    bool IsOverlay(const SDK::UWidget* widget) { return widget->Class == SDK::UOverlay::StaticClass(); }
+    bool IsCanvas(const SDK::UWidget* widget)  { return widget->Class == SDK::UCanvasPanel::StaticClass(); }
+
+    bool SameColour(const SDK::FSlateColor& a, const SDK::FSlateColor& b)
+    {
+        return a.ColorUseRule == b.ColorUseRule &&
+               a.SpecifiedColor.R == b.SpecifiedColor.R && a.SpecifiedColor.G == b.SpecifiedColor.G &&
+               a.SpecifiedColor.B == b.SpecifiedColor.B && a.SpecifiedColor.A == b.SpecifiedColor.A;
     }
 
     // Puts the text at `position` in its panel: an overlay slot's padding,
     // or a canvas slot's position.
     void Place(SDK::UTextBlock* text, SDK::UPanelWidget* panel, const SDK::FVector2D& position)
     {
-        if (panel->IsA(SDK::UOverlay::StaticClass()))
+        if (IsOverlay(panel))
         {
             SDK::FMargin padding{};
             padding.Left = static_cast<float>(position.X);
@@ -352,8 +349,9 @@ namespace
     // the rows under it, and a size box or border holds a single child. Room
     // means the text stays inside the panel's current bounds, so the panel's
     // own size, and everything laid out around it, is unchanged.
-    Attached Attach(SDK::UCrUW_BuildingDroneHud* hud)
+    Attached Attach(SDK::UCrUW_BuildingDroneHud* hud, const char** why)
     {
+        *why = "the distance readout is hidden or not laid out yet";
         SDK::UTextBlock* source = hud->DistanceValueU;
         float opacity = 1.0f;
         if (!source || !ReadoutShown(source, nullptr, &opacity))
@@ -364,33 +362,33 @@ namespace
             return Attached::NotYet;
 
         SDK::UPanelWidget* panel = nullptr;
+        SDK::FVector2D room = {};
         double left = 0.0, bottom = 0.0, scale = 1.0;
         SDK::UWidget* widget = ParentOf(source);
         for (int depth = 0; widget && depth < kMaxTreeDepth; ++depth, widget = ParentOf(widget))
         {
-            if (!widget->IsA(SDK::UOverlay::StaticClass()) && !widget->IsA(SDK::UCanvasPanel::StaticClass()))
+            if (!IsOverlay(widget) && !IsCanvas(widget))
                 continue;
             if (!DigitsIn(hud, widget, &left, &bottom, &scale))
                 return Attached::NotYet;
 
             const double em = source->Font.Size * scale * 96.0 / 72.0;
-            const SDK::FVector2D room = SDK::USlateBlueprintLibrary::GetLocalSize(widget->GetCachedGeometry());
-            if (left >= 0.0 && bottom >= 0.0 &&
-                left + kTextWidthEm * em <= room.X && bottom + kTextHeightEm * em <= room.Y)
+            const SDK::FVector2D bounds = SDK::USlateBlueprintLibrary::GetLocalSize(widget->GetCachedGeometry());
+            room = Vec(kTextWidthEm * em, kTextHeightEm * em);
+            if (left >= 0.0 && bottom >= 0.0 && left + room.X <= bounds.X && bottom + room.Y <= bounds.Y)
             {
                 panel = static_cast<SDK::UPanelWidget*>(widget);
                 break;
             }
         }
+        *why = "no overlay or canvas panel above the distance readout has room for the text";
         if (!panel)
             return Attached::Never;
 
+        *why = "the text block could not be created";
         SDK::UObject* created = SDK::UGameplayStatics::SpawnObject(SDK::UTextBlock::StaticClass(), panel->Outer);
         if (!created || !created->IsA(SDK::UTextBlock::StaticClass()))
-        {
-            LOG_WARN("Speedometer: could not create the text block; beside the crosshair instead");
             return Attached::Never;
-        }
         auto* text = static_cast<SDK::UTextBlock*>(created);
 
         // Drawn at the readout's size even if a panel in between scales it.
@@ -406,7 +404,8 @@ namespace
         text->SetTextTransformPolicy(source->TextTransformPolicy);
         text->SetJustification(SDK::ETextJustify::Left);
 
-        if (panel->IsA(SDK::UOverlay::StaticClass()))
+        *why = "the panel would not take the text block";
+        if (IsOverlay(panel))
         {
             SDK::UOverlaySlot* slot = static_cast<SDK::UOverlay*>(panel)->AddChildToOverlay(text);
             if (!slot)
@@ -430,8 +429,8 @@ namespace
         g_hud.Set(hud);
         g_panel.Set(panel);
         g_text.Set(text);
-        g_textShown   = false;
         g_textOpacity = 1.0f;
+        g_room        = room;
         g_shownText.clear();
         Place(text, panel, Vec(left, bottom));
 
@@ -481,21 +480,23 @@ namespace
                 }
             }
 
-            const Attached result = hud ? Attach(hud) : Attached::NotYet;
+            // Only a HUD with no room, or none found by the end of the grace,
+            // gives up until the next launch; a readout not laid out yet is
+            // tried again on the next sample.
+            const char* why = "the drone HUD was not found";
+            const bool  late = now - g_droneSinceMs >= kAttachGraceMs;
+            const Attached result = hud ? Attach(hud, &why) : late ? Attached::Never : Attached::NotYet;
             if (result == Attached::Yes)
             {
                 text  = g_text.Get();
                 panel = g_panel.Get();
             }
-            else if (result == Attached::Never || now - g_droneSinceMs >= kAttachGraceMs)
+            else if (result == Attached::Never || late)
             {
-                g_attachFailed = true;
+                g_attachFailed = result == Attached::Never;
                 if (!g_loggedFallback)
                 {
-                    if (hud)
-                        LogAncestry(hud->DistanceValueU);
-                    else
-                        LOG_INFO("Speedometer: the drone HUD was not found; beside the crosshair instead");
+                    LogFallback(why, hud ? hud->DistanceValueU : nullptr);
                     g_loggedFallback = true;
                 }
             }
@@ -515,6 +516,24 @@ namespace
 
         if (std::fabs(left - g_position.X) > kMoveEpsilon || std::fabs(bottom - g_position.Y) > kMoveEpsilon)
             Place(text, panel, Vec(left, bottom));
+
+        // Text larger than the room checked at attach could grow a panel
+        // that sizes to its content: give the place up.
+        const SDK::FVector2D size = SDK::USlateBlueprintLibrary::GetLocalSize(text->GetCachedGeometry());
+        if (size.X > g_room.X || size.Y > g_room.Y)
+        {
+            Detach();
+            g_attachFailed = true;
+            if (!g_loggedFallback)
+            {
+                LogFallback("the speed text is larger than the room checked under the readout", hud->DistanceValueU);
+                g_loggedFallback = true;
+            }
+            return false;
+        }
+
+        if (!SameColour(text->ColorAndOpacity, hud->DistanceValueU->ColorAndOpacity))
+            text->SetColorAndOpacity(hud->DistanceValueU->ColorAndOpacity);
 
         if (std::fabs(opacity - g_textOpacity) > 0.02f)
         {

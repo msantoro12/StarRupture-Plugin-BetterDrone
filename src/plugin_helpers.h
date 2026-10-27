@@ -3,10 +3,10 @@
 
 IPluginSelf* GetSelf();
 
-// Shutdown also runs at process exit and, on loaders older than 1.22.0, from
-// the render thread. Game objects are only touched where OnGameThread() is
-// true: the thread the last engine tick ran on (NoteGameThread, called at the
-// top of every tick). False until the first tick.
+// On loaders older than 1.22.0, RELOAD runs shutdown on the render thread.
+// Game objects are only touched where OnGameThread() is true: the thread the
+// last engine tick ran on (NoteGameThread, called at the top of every tick).
+// False until the first tick.
 void NoteGameThread();
 bool OnGameThread();
 
