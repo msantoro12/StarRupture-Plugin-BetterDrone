@@ -39,8 +39,11 @@ namespace DroneHeatRing
     constexpr float kRadius    = 26.0f;
     constexpr float kThickness = 2.0f;
 
-    // The outer edge of the warning ring, the widest thing Draw draws.
-    constexpr float kOuterRadius = kRadius + 2.5f * kThickness + 0.375f * kThickness;
+    // The warning ring outside the track, and its outer edge: the widest
+    // thing Draw draws.
+    constexpr float kWarnRadius    = kRadius + 2.5f * kThickness;
+    constexpr float kWarnThickness = 0.75f * kThickness;
+    constexpr float kOuterRadius   = kWarnRadius + 0.5f * kWarnThickness;
 
     // The crosshair, in screen pixels: the middle of the screen, as the laser
     // traces along the drone camera's centre line. False until the display
@@ -126,7 +129,7 @@ namespace DroneHeatRing
         if (v.overheated || heat >= 0.85f)
         {
             const float ringAlpha = v.overheated ? 0.15f + 0.65f * flash : 0.25f + 0.45f * pulse;
-            ui->DL_AddCircle(dl, cx, cy, radius + 2.5f * thick, WithAlpha(kRed, ringAlpha), 64, 0.75f * thick);
+            ui->DL_AddCircle(dl, cx, cy, kWarnRadius * v.scale, WithAlpha(kRed, ringAlpha), 64, kWarnThickness * v.scale);
         }
     }
 }

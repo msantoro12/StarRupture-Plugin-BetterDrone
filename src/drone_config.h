@@ -84,7 +84,7 @@ namespace DroneConfig
         static void  ReadSpeedUnit(char* outBuffer, int bufferSize);
         static void  WriteSpeedUnit(const char* unit);
 
-        // The speed readout on the drone HUD. Cached like the unit, so the
+        // The speedometer beside the crosshair. Cached like the unit, so the
         // tick reads memory, not the file.
         static bool  ReadSpeedometer();
         static void  WriteSpeedometer(bool enabled);

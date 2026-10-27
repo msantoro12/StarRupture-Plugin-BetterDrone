@@ -4,8 +4,8 @@
 
 // A transparent window of the loader's for draw-list drawing over the game:
 // no title, no input, no background, and shown only while there is
-// something to draw. Used by the drone's map marker and the laser's heat
-// ring.
+// something to draw. Used by the drone's map marker, the laser's heat ring
+// and the speedometer.
 class OverlayWidget
 {
 public:

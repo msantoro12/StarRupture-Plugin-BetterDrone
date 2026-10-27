@@ -70,7 +70,9 @@ namespace
         const float y     = cy - 0.5f * size;
         const float o     = (std::max)(1.0f, scale);
 
-        PluginDrawList dl = ui->GetForegroundDrawList();
+        // Behind the loader's windows, unlike the ring: it shows for the whole
+        // flight, and must not cover a panel opened over the crosshair.
+        PluginDrawList dl = ui->GetBackgroundDrawList();
         ui->DL_AddTextSized(dl, size, x - o, y, kOutline, text);
         ui->DL_AddTextSized(dl, size, x + o, y, kOutline, text);
         ui->DL_AddTextSized(dl, size, x, y - o, kOutline, text);
@@ -113,11 +115,10 @@ void TickDroneSpeedometer()
         return;
     g_nextSampleMs = now + kSampleMs;
 
-    SDK::ACrCharacterPlayerBase* character =
-        DroneConfig::Config::ReadSpeedometer() && !IsGameMenuOpen() ? LocalPlayerCharacter() : nullptr;
+    SDK::ACrCharacterPlayerBase* character = DroneConfig::Config::ReadSpeedometer() ? LocalPlayerCharacter() : nullptr;
     SDK::ACrCharacterDroneBase* drone =
         character && character->Status == SDK::EPlayerCharacterStatus::BuildingDrone ? character->BuildingDrone : nullptr;
-    if (!drone || !ObjectRef<SDK::ACrCharacterDroneBase>(drone).Get())
+    if (!drone || !ObjectRef<SDK::ACrCharacterDroneBase>(drone).Get() || IsGameMenuOpen())
     {
         Hide();
         return;
