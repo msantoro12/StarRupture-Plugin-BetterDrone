@@ -20,7 +20,7 @@ Opens with **F10** (rebindable on the loader's Config page, Controls), the **BET
 
 - **Rows:** Drone Speed, Acceleration, Deceleration, Boost Multiplier, Max Radius, Max Height, Drone Size (the drone's collision radius, 20 to 50 cm, stock 50; smaller fits narrower gaps such as ladder holes) and a collapsed Audio section (Master, Idle, Movement, Rotation, Station volume; Master sets the rest). Each has a slider, a number box (typed values clamp to the ranges below) and a reset arrow (default; the game's own value for speed, radius and height).
 - **Speed Display Unit:** **km/h** (default), **mph** or **cm/s** (1000 cm/s = 36 km/h = 22.4 mph). Sets the speed, acceleration (km/h/s, mph/s, cm/s²) and range (m, ft, cm) rows, the toast and the speedometer.
-- **Speedometer** (on by default): the drone's speed on the drone HUD, under the distance readout, in the same font.
+- **Speedometer** (on by default): the drone's speed just right of the crosshair, outside the laser heat ring.
 - **Saved presets:** Save (named for you), Rename, Delete (asks first), for speed and range. Built-in names are reserved. The dropdown and the hotkeys use the first 16 per group, A-Z. Names up to 63 characters.
 
 | Preset | Speed (cm/s) | Boost | Accel / decel (cm/s²) | Max Radius (cm) | Max Height (cm) |

@@ -146,6 +146,7 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     InitDroneLaser(self);
     InitDroneUI(self);
     InitDroneMapMarker(self);
+    InitDroneSpeedometer(self);
     InitDronePresetKeys(self);
 
     self->hooks->Engine->RegisterOnInit(OnEngineInit);
@@ -181,7 +182,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     ShutdownWavePatch();
     DroneAudio::Shutdown();
     ShutdownDroneMapMarker(g_self);
-    ShutdownDroneSpeedometer();
+    ShutdownDroneSpeedometer(g_self);
     ShutdownDronePresetKeys(g_self);
     ShutdownDroneUI(g_self);
     ShutdownGameSessionTracking(g_self);

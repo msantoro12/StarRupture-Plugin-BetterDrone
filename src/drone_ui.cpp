@@ -1217,7 +1217,7 @@ void RenderDronePanel(IModLoaderImGui* ui)
     if (ui->Checkbox("Speedometer##hud_speedometer", &speedometer))
         DroneConfig::Config::WriteSpeedometer(speedometer);
     if (ui->IsItemHovered())
-        ui->SetTooltip("Shows the drone's speed on the drone HUD, under the distance readout, in the unit above.");
+        ui->SetTooltip("Shows the drone's speed just right of the crosshair, in the unit above.");
 
     ui->Spacing();
 

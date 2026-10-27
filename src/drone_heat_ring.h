@@ -39,6 +39,24 @@ namespace DroneHeatRing
     constexpr float kRadius    = 26.0f;
     constexpr float kThickness = 2.0f;
 
+    // The outer edge of the warning ring, the widest thing Draw draws.
+    constexpr float kOuterRadius = kRadius + 2.5f * kThickness + 0.375f * kThickness;
+
+    // The crosshair, in screen pixels: the middle of the screen, as the laser
+    // traces along the drone camera's centre line. False until the display
+    // has a size. Render thread.
+    inline bool Crosshair(IModLoaderImGui* ui, float* cx, float* cy)
+    {
+        float width = 0.0f, height = 0.0f;
+        ui->GetDisplaySize(&width, &height);
+        if (width <= 0.0f || height <= 0.0f)
+            return false;
+
+        *cx = 0.5f * width;
+        *cy = 0.5f * height;
+        return true;
+    }
+
     constexpr unsigned int kOrange = 0xFF2090FFu;   // #FF9020
     constexpr unsigned int kRed    = 0xFF2A3AFFu;   // #FF3A2A
 
