@@ -11,6 +11,7 @@
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
 #include <windows.h>
+#include <atomic>
 #include <cstring>
 
 #include "drone_ui.h"
@@ -18,6 +19,11 @@
 static IPluginSelf* g_self = nullptr;
 
 IPluginSelf* GetSelf() { return g_self; }
+
+static std::atomic<DWORD> g_gameThreadId{ 0 };
+
+void NoteGameThread() { g_gameThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed); }
+bool OnGameThread()   { return GetCurrentThreadId() == g_gameThreadId.load(std::memory_order_relaxed); }
 
 #ifndef MODLOADER_BUILD_TAG
 #define MODLOADER_BUILD_TAG "dev"
@@ -64,6 +70,7 @@ static void OnEngineInit()
 
 static void OnEngineTick(float deltaSeconds)
 {
+    NoteGameThread();
     OnDroneTick(deltaSeconds);
     TickDroneFloorGuard(deltaSeconds);
     TickDroneHitProbe();

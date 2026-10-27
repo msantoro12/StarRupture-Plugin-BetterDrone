@@ -40,10 +40,6 @@ namespace
 
     std::atomic<bool> g_lastKnownInDrone{ false };
 
-    // The thread OnDroneTick runs on, so shutdown can tell whether it may
-    // touch the live drone. 0 until the first tick.
-    std::atomic<DWORD> g_gameThreadId{ 0 };
-
     float g_currentEffectiveSpeed = 0.0f;
 
     // Last base speed OnDroneTick observed, so a slider/preset/config change
@@ -451,7 +447,7 @@ void RestoreCDODefaults()
 
     // Shutdown runs on the game thread on loader 1.22 and later; anywhere
     // else, leave the live drone alone.
-    if (GetCurrentThreadId() == g_gameThreadId.load(std::memory_order_relaxed))
+    if (OnGameThread())
     {
         try
         {
@@ -604,8 +600,6 @@ void OnDroneTick(float deltaSeconds)
 {
     if (!g_drone.valid || !g_drone.speedPerSec)
         return;
-
-    g_gameThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
 
     bool needsInstanceUpdate = false;
 

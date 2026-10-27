@@ -79,7 +79,6 @@ namespace
     // Written by the key callback, read by the tick.
     std::atomic<bool>  g_keyHeld{ false };
     std::atomic<int>   g_keyVk{ 0 };
-    std::atomic<DWORD> g_gameThreadId{ 0 };
 
     // The names the key is registered under, kept so exactly those are
     // unregistered again.
@@ -1005,7 +1004,7 @@ void ShutdownDroneLaser(IPluginSelf* self)
     // render thread. Game objects are only touched from the game thread;
     // anywhere else mining, beam and loops are left as they are (see
     // DroneLaserFx::Shutdown).
-    const bool onGameThread = GetCurrentThreadId() == g_gameThreadId.load(std::memory_order_relaxed);
+    const bool onGameThread = OnGameThread();
     DroneLaserFx::Shutdown(onGameThread);
     ShutdownDroneHeatDisplay(self);
 
@@ -1020,8 +1019,6 @@ void ShutdownDroneLaser(IPluginSelf* self)
 
 void TickDroneLaser(float deltaSeconds)
 {
-    g_gameThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
-
     SampleDrillMods(LocalPlayerCharacter());
 
     Frame frame;
