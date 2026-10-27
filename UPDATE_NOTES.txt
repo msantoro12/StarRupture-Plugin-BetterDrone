@@ -7,6 +7,7 @@ New option Drone Reveals Map: flying uncovers the map (off by default)
 Your parked character no longer falls through the floor while the drone flies far away
 The drone stays out when you close the build menu
 Fly the drone outside during a wave; your sheltered character stays safe
-New option Drone Size: sets the drone's collision radius (20 to 50 cm, stock 50)
+New option Drone Size: a smaller drone fits through ladder holes and gaps
 Stock speed and range presets now use the game's own values
+Panel sliders now save the value you drag them to
 Speedometer under the drone HUD's distance readout, in your speed unit (panel toggle)
