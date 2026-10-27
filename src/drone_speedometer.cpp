@@ -215,10 +215,12 @@ namespace
         return product > 0.01f;
     }
 
-    // The visible distance digits, in `panel`'s own units: their left edge
+    // The visible distance digits, in `panel`'s own units: their right edge
     // and bottom edge, and how much bigger they draw there than in their own
-    // units. False until the HUD has been laid out.
-    bool DigitsIn(SDK::UCrUW_BuildingDroneHud* hud, SDK::UWidget* panel, double* left, double* bottom, double* scale)
+    // units. The right edge is the last element's, which keeps its place as
+    // the distance gains or loses a digit. False until the HUD has been laid
+    // out.
+    bool DigitsIn(SDK::UCrUW_BuildingDroneHud* hud, SDK::UWidget* panel, double* right, double* bottom, double* scale)
     {
         const SDK::FGeometry panelGeo = panel->GetCachedGeometry();
         if (SDK::USlateBlueprintLibrary::GetLocalSize(panelGeo).X <= 0.0)
@@ -245,7 +247,7 @@ namespace
             const SDK::FVector2D bottomRight = SDK::USlateBlueprintLibrary::AbsoluteToLocal(
                 panelGeo, SDK::USlateBlueprintLibrary::LocalToAbsolute(geo, size));
 
-            if (!any || topLeft.X < *left)        *left   = topLeft.X;
+            if (!any || bottomRight.X > *right)   *right  = bottomRight.X;
             if (!any || bottomRight.Y > *bottom)  *bottom = bottomRight.Y;
             if (elem == hud->DistanceValueU)      *scale  = (bottomRight.Y - topLeft.Y) / size.Y;
             any = true;
@@ -324,27 +326,36 @@ namespace
                a.SpecifiedColor.B == b.SpecifiedColor.B && a.SpecifiedColor.A == b.SpecifiedColor.A;
     }
 
-    // Puts the text at `position` in its panel: an overlay slot's padding,
-    // or a canvas slot's position.
-    void Place(SDK::UTextBlock* text, SDK::UPanelWidget* panel, const SDK::FVector2D& position)
+    // Where the text's right and top edges go for the readout's `right` and
+    // `bottom` edges in `panel`: the gap from the panel's right edge for an
+    // overlay slot's padding, the position for a canvas slot.
+    SDK::FVector2D Anchor(SDK::UPanelWidget* panel, double right, double bottom)
+    {
+        if (!IsOverlay(panel))
+            return Vec(right, bottom);
+        return Vec(SDK::USlateBlueprintLibrary::GetLocalSize(panel->GetCachedGeometry()).X - right, bottom);
+    }
+
+    void Place(SDK::UTextBlock* text, SDK::UPanelWidget* panel, const SDK::FVector2D& anchor)
     {
         if (IsOverlay(panel))
         {
             SDK::FMargin padding{};
-            padding.Left = static_cast<float>(position.X);
-            padding.Top  = static_cast<float>(position.Y);
+            padding.Right = static_cast<float>(anchor.X);
+            padding.Top   = static_cast<float>(anchor.Y);
             static_cast<SDK::UOverlaySlot*>(text->Slot)->SetPadding(padding);
         }
         else
         {
-            static_cast<SDK::UCanvasPanelSlot*>(text->Slot)->SetPosition(position);
+            static_cast<SDK::UCanvasPanelSlot*>(text->Slot)->SetPosition(anchor);
         }
-        g_position = position;
+        g_position = anchor;
     }
 
-    // Adds a text block, styled like the readout's units digit, to the
-    // nearest overlay or canvas panel above the readout that has room for it
-    // under the digits. Only those two place a child without moving the ones
+    // Adds a text block, styled like the readout's units digit and right
+    // aligned to the digits' right edge, to the nearest overlay or canvas
+    // panel above the readout that has room for it under the digits, growing
+    // leftward. Only those two place a child without moving the ones
     // already there: a horizontal or vertical box would shift the readout or
     // the rows under it, and a size box or border holds a single child. Room
     // means the text stays inside the panel's current bounds, so the panel's
@@ -363,19 +374,19 @@ namespace
 
         SDK::UPanelWidget* panel = nullptr;
         SDK::FVector2D room = {};
-        double left = 0.0, bottom = 0.0, scale = 1.0;
+        double right = 0.0, bottom = 0.0, scale = 1.0;
         SDK::UWidget* widget = ParentOf(source);
         for (int depth = 0; widget && depth < kMaxTreeDepth; ++depth, widget = ParentOf(widget))
         {
             if (!IsOverlay(widget) && !IsCanvas(widget))
                 continue;
-            if (!DigitsIn(hud, widget, &left, &bottom, &scale))
+            if (!DigitsIn(hud, widget, &right, &bottom, &scale))
                 return Attached::NotYet;
 
             const double em = source->Font.Size * scale * 96.0 / 72.0;
             const SDK::FVector2D bounds = SDK::USlateBlueprintLibrary::GetLocalSize(widget->GetCachedGeometry());
             room = Vec(kTextWidthEm * em, kTextHeightEm * em);
-            if (left >= 0.0 && bottom >= 0.0 && left + room.X <= bounds.X && bottom + room.Y <= bounds.Y)
+            if (right - room.X >= 0.0 && bottom >= 0.0 && right <= bounds.X && bottom + room.Y <= bounds.Y)
             {
                 panel = static_cast<SDK::UPanelWidget*>(widget);
                 break;
@@ -402,7 +413,7 @@ namespace
         text->SetShadowOffset(source->ShadowOffset);
         text->SetShadowColorAndOpacity(source->ShadowColorAndOpacity);
         text->SetTextTransformPolicy(source->TextTransformPolicy);
-        text->SetJustification(SDK::ETextJustify::Left);
+        text->SetJustification(SDK::ETextJustify::Right);
 
         *why = "the panel would not take the text block";
         if (IsOverlay(panel))
@@ -410,7 +421,7 @@ namespace
             SDK::UOverlaySlot* slot = static_cast<SDK::UOverlay*>(panel)->AddChildToOverlay(text);
             if (!slot)
                 return Attached::Never;
-            slot->SetHorizontalAlignment(SDK::EHorizontalAlignment::HAlign_Left);
+            slot->SetHorizontalAlignment(SDK::EHorizontalAlignment::HAlign_Right);
             slot->SetVerticalAlignment(SDK::EVerticalAlignment::VAlign_Top);
         }
         else
@@ -422,7 +433,7 @@ namespace
             anchors.Minimum = Vec(0.0, 0.0);
             anchors.Maximum = Vec(0.0, 0.0);
             slot->SetAnchors(anchors);
-            slot->SetAlignment(Vec(0.0, 0.0));
+            slot->SetAlignment(Vec(1.0, 0.0));
             slot->SetAutoSize(true);
         }
 
@@ -432,12 +443,12 @@ namespace
         g_textOpacity = 1.0f;
         g_room        = room;
         g_shownText.clear();
-        Place(text, panel, Vec(left, bottom));
+        Place(text, panel, Anchor(panel, right, bottom));
 
         if (!g_loggedAttach)
         {
             LOG_INFO("Speedometer: under the drone HUD's distance readout, in %s %s at %.0f,%.0f",
-                panel->Class ? panel->Class->GetName().c_str() : "?", panel->GetName().c_str(), left, bottom);
+                panel->Class ? panel->Class->GetName().c_str() : "?", panel->GetName().c_str(), right, bottom);
             g_loggedAttach = true;
         }
         return Attached::Yes;
@@ -507,15 +518,16 @@ namespace
         // The game hides the readout (a cutscene, a collapsed HUD): the speed
         // goes with it, and is not drawn anywhere else.
         float opacity = 1.0f;
-        double left = 0.0, bottom = 0.0, scale = 1.0;
-        if (!ReadoutShown(hud->DistanceValueU, panel, &opacity) || !DigitsIn(hud, panel, &left, &bottom, &scale))
+        double right = 0.0, bottom = 0.0, scale = 1.0;
+        if (!ReadoutShown(hud->DistanceValueU, panel, &opacity) || !DigitsIn(hud, panel, &right, &bottom, &scale))
         {
             ShowText(text, false);
             return true;
         }
 
-        if (std::fabs(left - g_position.X) > kMoveEpsilon || std::fabs(bottom - g_position.Y) > kMoveEpsilon)
-            Place(text, panel, Vec(left, bottom));
+        const SDK::FVector2D anchor = Anchor(panel, right, bottom);
+        if (std::fabs(anchor.X - g_position.X) > kMoveEpsilon || std::fabs(anchor.Y - g_position.Y) > kMoveEpsilon)
+            Place(text, panel, anchor);
 
         // Text larger than the room checked at attach could grow a panel
         // that sizes to its content: give the place up.
