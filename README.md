@@ -72,7 +72,7 @@ Hold **G** (rebindable on the loader's Config page, Controls) while flying to mi
 
 ### Floor guard
 
-With the range above stock, flying far out can unload the floor under your parked character. If it falls straight down from its spot (100 cm or more while the drone is out, any fall after return), it is held there until the floor is back, then set down walking. It gives up after 10 s. Walking, jumping or a knockback ends it once it has lasted 3 s; before that, held keys don't let you fall. No setting.
+With the range above stock, flying far out can unload the floor under your parked character. If it falls straight down from its spot (100 cm or more while the drone is out, any fall after return), it is held there until the floor is back, then set down walking. It gives up after 10 s. Walking ends the hold only after 3 s, so a key held while recalling doesn't drop you; jumping or a knockback after the set-down ends it. No setting.
 
 ### Wave shelter <sup>[✦](#msantoro12)</sup>
 
