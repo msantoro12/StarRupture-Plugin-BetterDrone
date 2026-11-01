@@ -159,6 +159,8 @@ Use at your own risk. The authors are not responsible for any damage caused by u
 
 Original mod by [@AlienXAXS](https://github.com/AlienXAXS).
 
+Maintained by [@msantoro12](https://github.com/msantoro12).
+
 Contributors:
 
 - <a id="msantoro12"></a><sup>✦</sup> [@msantoro12](https://github.com/msantoro12), creator of [StarRupture Planner](https://starrupture.goodstuff.software)
