@@ -136,6 +136,8 @@ namespace
         bool           pinned = false;   // the digits have a fixed width, with what each had
         float          minWidth[kGameElems] = {};
         SDK::ETextJustify justify[kGameElems] = {};
+        float          cell = 0.0f;      // the pinned width of one digit
+        float          unitsWidth = 0.0f;   // the width last given the units digit
         bool           measured = false;
         Digits         digits;           // where the readout was when last measured
         SDK::FVector2D measuredIn = {};  // the panel's size then
@@ -419,6 +421,8 @@ namespace
         {
             ForgetLine(row.line);
             row.measured = false;
+            row.pinned   = false;
+            row.hidden   = false;
         }
         g_panel.Reset();
     }
@@ -455,10 +459,30 @@ namespace
         row.hidden = hide;
     }
 
-    // Gives the readout's digits a fixed width, centred in it. The game lays
-    // the digits out in a box with the reticle, so a digit changing width
-    // (a "1" for an "8") re-centred the box and moved the reticle. False when
-    // nothing changed.
+    // Gives the units digit the room of the leading digits the game has
+    // collapsed (it collapses the thousands, hundreds and tens below 1000,
+    // 100 and 10 on every tick), so the row keeps four digits' width.
+    void HoldRowWidth(SDK::UTextBlock* const* elems, FeetRow& row)
+    {
+        if (!elems[3] || !(row.cell > 0.0f))
+            return;
+        int collapsed = 0;
+        for (int i = 0; i < 3; ++i)
+            if (elems[i] && elems[i]->Visibility == SDK::ESlateVisibility::Collapsed)
+                ++collapsed;
+        const float width = row.cell * static_cast<float>(1 + collapsed);
+        if (width != row.unitsWidth)
+        {
+            elems[3]->SetMinDesiredWidth(width);
+            row.unitsWidth = width;
+        }
+    }
+
+    // Gives the readout's digits a fixed width, the units digit right aligned
+    // in the room of the digits the game collapses. The game lays the digits
+    // out in a box with the reticle, so a digit changing width (a "1" for an
+    // "8"), or one more digit shown, re-centred the box and moved the
+    // reticle. False when nothing changed.
     bool PinDigits(SDK::UCrUW_BuildingDroneHud* hud, Row which)
     {
         FeetRow& row = g_rows[static_cast<int>(which)];
@@ -467,18 +491,41 @@ namespace
 
         SDK::UTextBlock* elems[kGameElems] = {};
         RowElems(hud, which, elems);
+        if (!elems[3] || !(elems[3]->Font.Size > 0.0f))
+            return false;
+        row.cell = static_cast<float>(kDigitWidthEm * elems[3]->Font.Size * 96.0 / 72.0);
         for (int i = 0; i < 4; ++i)
         {
-            if (!elems[i] || !(elems[i]->Font.Size > 0.0f))
+            if (!elems[i])
                 continue;
             row.minWidth[i] = elems[i]->MinDesiredWidth;
             row.justify[i]  = elems[i]->Justification;
-            elems[i]->SetMinDesiredWidth(static_cast<float>(kDigitWidthEm * elems[i]->Font.Size * 96.0 / 72.0));
-            elems[i]->SetJustification(SDK::ETextJustify::Center);
+            elems[i]->SetMinDesiredWidth(row.cell);
+            elems[i]->SetJustification(i == 3 ? SDK::ETextJustify::Right : SDK::ETextJustify::Center);
         }
+        row.unitsWidth = row.cell;
+        HoldRowWidth(elems, row);
         row.pinned   = true;
         row.measured = false;
         return true;
+    }
+
+    // Every tick: the room of the digits the game has collapsed since the
+    // last one.
+    void HoldPinnedRows()
+    {
+        SDK::UCrUW_BuildingDroneHud* hud = g_hud.Get();
+        if (!hud)
+            return;
+        for (int i = 0; i < kRows; ++i)
+        {
+            FeetRow& row = g_rows[i];
+            if (!row.pinned)
+                continue;
+            SDK::UTextBlock* elems[kGameElems] = {};
+            RowElems(hud, static_cast<Row>(i), elems);
+            HoldRowWidth(elems, row);
+        }
     }
 
     // Gives the digits the width and alignment they had.
@@ -1038,6 +1085,8 @@ void TickDroneSpeedometer()
 {
     if (!g_overlay.IsRegistered())
         return;
+
+    HoldPinnedRows();
 
     const uint64_t now = GetTickCount64();
     if (now < g_nextSampleMs)
