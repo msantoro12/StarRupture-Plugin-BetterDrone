@@ -74,6 +74,12 @@ Hold **G** (rebindable on the loader's Config page, Controls) while flying to mi
 
 With the range above stock, flying far out can unload the floor under your parked character. If it falls straight down from its spot (100 cm or more while the drone is out, any fall after return), it is held there until the floor is back, then set down walking. It gives up after 10 s. Walking, jumping or a knockback ends it. No setting.
 
+### Keep area around body loaded <sup>[✦](#msantoro12)</sup>
+
+The game loads the world around the view, and in the drone the view is the drone. Fly far out and the ground around your parked character unloads, so the world is gone when you come back and streams in again. While the drone is out, BetterDrone gives your character one of the game's own streaming sources (the kind teleporters use) with a small round shape, so the area within `Body Area Radius` of your body stays loaded and active. The default is 40 m, the game's own drone range, which the stock drone never unloads. It is removed when the drone comes back, on turning the setting off, on death, world exit and RELOAD.
+
+Cost: memory and some actor ticks for that area, about what standing there costs. It adds no GPU time, since that area is beyond the drone's view. Turn it off with `Keep Area Around Body Loaded` if you would rather not pay for it.
+
 ### Wave shelter <sup>[✦](#msantoro12)</sup>
 
 You can fly the drone outside during a wave while your character stays safe in the shelter and won't die. Shelter is judged at your character's body, not at the drone, and shelter built or deconstructed around it mid-flight counts at once. With `Always Allow Drone` off, the stock rule that ends the drone in an interior follows your character too, so flying the drone into one no longer ends it. No setting.
@@ -89,6 +95,8 @@ Config is stored in `Plugins\config\BetterDrone.ini` and is generated on first l
 | Section | Key | Default | Description |
 |---|---|---|---|
 | `[Drone]` | `Always Allow Drone` | `false` | Drone allowed where blocked |
+| `[Drone]` | `Keep Area Around Body Loaded` | `true` | Keeps the ground around your parked character loaded while the drone is out |
+| `[Drone]` | `Body Area Radius` | `40` | Metres kept loaded (20 to 200); 40 is the stock drone range |
 | `[Interaction]` | `Interact In Drone Mode` | `true` | Interact from the drone |
 | `[Interaction]` | `Interact Key` | `E` | Match your game's interact key |
 | `[Interaction]` | `Map In Drone Mode` | `true` | Map from the drone |

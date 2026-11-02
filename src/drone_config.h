@@ -36,6 +36,8 @@ namespace DroneConfig
         // Loader-page settings: stored in BetterDrone.ini via IPluginConfig,
         // editable from the ModLoader settings window.
         static bool ReadAlwaysAllowDrone();
+        static bool ReadKeepBodyLoaded();
+        static float ReadBodyAreaRadius();   // metres
         static bool ReadInteractInDroneMode();
         static void ReadInteractKey(char* outBuffer, int bufferSize);
         static bool ReadMapInDroneMode();

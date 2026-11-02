@@ -3,12 +3,14 @@
 #include "drone_interact.h"
 #include "drone_wave_patch.h"
 #include "drone_audio.h"
+#include "drone_body_anchor.h"
 #include "drone_floor_guard.h"
 #include "drone_laser.h"
 #include "drone_map_marker.h"
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
 #include <windows.h>
+#include <cstdlib>
 #include <cstring>
 
 #include "drone_ui.h"
@@ -64,6 +66,7 @@ static void OnEngineTick(float deltaSeconds)
 {
     OnDroneTick(deltaSeconds);
     TickDroneFloorGuard(deltaSeconds);
+    TickDroneBodyAnchor();
     DroneAudio::Tick(deltaSeconds);
     TickDroneLaser(deltaSeconds);
     TickDroneMenuClose();
@@ -75,7 +78,8 @@ static void OnEngineTick(float deltaSeconds)
 // Fires only from the loader's own settings window, for the entries
 // registered in DroneConfig::Config::Initialize. Keybind rebinds and the
 // boolean entries are picked up live wherever they're consulted, except
-// Drone Reveals Map, which the tick reads from a cache set here. This fires
+// Drone Reveals Map and the two body-area entries, which the tick reads from
+// a cache set here. This fires
 // before the loader writes the INI, so the cache takes newValue.
 static void OnConfigChanged(const char* section, const char* key, const char* newValue)
 {
@@ -103,6 +107,12 @@ static void OnConfigChanged(const char* section, const char* key, const char* ne
 
     if (strcmp(section, "Interaction") == 0 && strcmp(key, "Drone Reveals Map") == 0)
         SetDroneFogEnabled(newValue && (strcmp(newValue, "1") == 0 || _stricmp(newValue, "true") == 0));
+
+    if (strcmp(section, "Drone") == 0 && strcmp(key, "Keep Area Around Body Loaded") == 0)
+        SetDroneBodyAnchorEnabled(newValue && (strcmp(newValue, "1") == 0 || _stricmp(newValue, "true") == 0));
+
+    if (strcmp(section, "Drone") == 0 && strcmp(key, "Body Area Radius") == 0 && newValue)
+        SetDroneBodyAnchorRadiusMeters(static_cast<float>(atof(newValue)));
 
     LOG_DEBUG("OnConfigChanged: [%s] %s updated", section, key);
 }
@@ -137,6 +147,8 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     LOG_DEBUG("PluginInit: registering hooks");
 
     DroneConfig::Config::Initialize(self);
+    SetDroneBodyAnchorEnabled(DroneConfig::Config::ReadKeepBodyLoaded());
+    SetDroneBodyAnchorRadiusMeters(DroneConfig::Config::ReadBodyAreaRadius());
     DroneAudio::Initialize();
     InitGameSessionTracking(self);
     InitDroneLaser(self);
@@ -169,6 +181,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     LOG_DEBUG("PluginShutdown: restoring CDO defaults and unregistering hooks");
 
     UnregisterBoostKey(g_self);
+    ShutdownDroneBodyAnchor();
     ShutdownDroneLaser(g_self);
     ShutdownDroneInteract();
     ShutdownDroneMap();
