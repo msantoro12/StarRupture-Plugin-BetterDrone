@@ -13,3 +13,4 @@ Stock speed and range presets now use the game's own values
 Panel sliders now save the value you drag them to
 Speedometer under the drone HUD's distance readout, numbers lined up with the distance, in your speed unit (panel toggle)
 Drone HUD distance and height show in feet when the speed unit is mph, in metres otherwise
+The BetterDrone panel closes on Escape when the mod loader opened it
