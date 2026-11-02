@@ -81,12 +81,34 @@ namespace
         }
     }
 
-    // True while Boost Key follows Sprint and the key is not resolved yet:
-    // OnDroneTick looks again every kSprintRetryMs until it is. Game thread.
+    // The Sprint lookup's state: written on the game thread only (a lookup
+    // reads the world, so it is never made from the init or render thread).
+    // pending: Boost Key follows Sprint and its key is not settled yet.
+    // fromApplied: the cached key came from the player's applied mappings,
+    // so a context default found later must not replace it.
     bool g_sprintPending = false;
+    bool g_sprintFromApplied = false;
     bool g_sprintFallbackLogged = false;
+    int g_sprintTries = 0;
     ULONGLONG g_sprintTriedMs = 0;
-    constexpr ULONGLONG kSprintRetryMs = 2000;
+
+    // Quick at first, for the load, then rare: a miss that lasts is not
+    // going to clear by being asked every two seconds.
+    ULONGLONG SprintRetryMs()
+    {
+        return g_sprintTries < 5 ? 2000 : 30000;
+    }
+
+    // Called from any thread when Boost Key is set to follow Sprint: the
+    // lookup itself waits for the next tick.
+    void RequestSprintKey()
+    {
+        g_sprintPending = true;
+        g_sprintFromApplied = false;
+        g_sprintFallbackLogged = false;
+        g_sprintTries = 0;
+        g_sprintTriedMs = 0;
+    }
 
     // Resolves the game's current Sprint key and caches its VK for
     // OnDroneTick to poll -- following Sprint registers no keybind with the
@@ -102,10 +124,17 @@ namespace
         const char* why = nullptr;
         const int vk = ResolveSprintVk(keyName, sizeof(keyName), &status, &why);
         g_sprintTriedMs = GetTickCount64();
+        ++g_sprintTries;
 
         if (vk != 0)
         {
-            g_sprintPending = false;
+            // The context default is only the stand-in for an applied key
+            // that is out of reach for the moment.
+            if (status == InputLookup::FoundDefault && g_sprintFromApplied)
+                return;
+
+            g_sprintFromApplied = status == InputLookup::Found;
+            g_sprintPending = !g_sprintFromApplied;
             if (g_boostKeyVk.exchange(vk, std::memory_order_relaxed) != vk)
                 LOG_INFO("boost key: following Sprint (%s)", keyName);
             return;
@@ -142,8 +171,7 @@ namespace
         {
             g_boostFollowsSprint.store(true, std::memory_order_relaxed);
             g_boostKeyVk.store(0, std::memory_order_relaxed);
-            g_sprintFallbackLogged = false;
-            ResolveAndCacheSprintKey(false);
+            RequestSprintKey();
             return;
         }
 
@@ -171,6 +199,7 @@ namespace
         // was active to observe it via the enter-drone edge below.
         if (g_boostFollowsSprint.load(std::memory_order_relaxed))
             ResolveAndCacheSprintKey(false);
+        g_sprintTries = 0;
     }
 
     void OnWorldEndPlay(SDK::UWorld*, const char* worldName)
@@ -688,7 +717,7 @@ void OnDroneTick(float deltaSeconds)
             ResolveAndCacheSprintKey(true);
     }
     else if (g_sprintPending && g_boostFollowsSprint.load(std::memory_order_relaxed) &&
-             GetTickCount64() - g_sprintTriedMs >= kSprintRetryMs)
+             GetTickCount64() - g_sprintTriedMs >= SprintRetryMs())
     {
         ResolveAndCacheSprintKey(inDrone);
     }

@@ -6,7 +6,12 @@ namespace SDK { class UClass; }
 // How a key lookup ended.
 enum class InputLookup
 {
+    // A key was found among the keys the player's input has applied.
     Found,
+    // A key was found only as the default of an input mapping context: the
+    // game has not applied the action's context (yet, or at the moment), so
+    // a key the player rebound would not show.
+    FoundDefault,
     // Not found, but it may turn up: no world, player or input config yet.
     NotReady,
     // The action is bound, but only to keys this plugin cannot poll (a
@@ -27,13 +32,13 @@ enum class InputLookup
 // outStatus and outWhy, when given, say how it ended and, short of a key,
 // which step stopped it.
 //
-// Game-thread only, and safe to call before a world exists.
+// Game thread only, and safe to call before a world exists.
 int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize,
                     InputLookup* outStatus = nullptr, const char** outWhy = nullptr);
 
 // The same resolution for any native input handler class (a subclass of
 // UCrNativeInputHandler, e.g. UCrInputNativeDroneMoveUp): the first keyboard
 // or mouse key for that handler's UInputAction, as a VK code. Returns 0 on
-// failure. Game-thread only.
+// failure. Game thread only.
 int ResolveInputHandlerVk(const SDK::UClass* handlerClass, char* outKeyName, size_t outKeyNameSize,
                           InputLookup* outStatus = nullptr, const char** outWhy = nullptr);

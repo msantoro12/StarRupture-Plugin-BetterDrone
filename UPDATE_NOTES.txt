@@ -15,3 +15,4 @@ Panel sliders now save the value you drag them to
 Speedometer under the drone HUD's distance readout, numbers lined up with the distance, in your speed unit (panel toggle)
 Drone HUD distance and height show in feet when the speed unit is mph, in metres otherwise
 The drone HUD ring stays centred on the crosshair as the distance and height change
+Boost follows your Sprint key as soon as the game has it, instead of staying on LeftShift

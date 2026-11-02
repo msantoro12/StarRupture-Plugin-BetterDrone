@@ -177,10 +177,13 @@ int ResolveInputHandlerVk(const SDK::UClass* handlerClass, char* outKeyName, siz
             // The live applied mappings first, so an in-game rebind shows up
             // here without any extra work on this plugin's part.
             const SDK::TArray<SDK::FEnhancedActionKeyMapping>* applied = AppliedMappings(why);
-            if ((applied && FindKeyFor(*applied, action, outKeyName, outKeyNameSize, vk, boundToOther)) ||
-                FindDefaultKeyFor(action, outKeyName, outKeyNameSize, vk, boundToOther))
+            if (applied && FindKeyFor(*applied, action, outKeyName, outKeyNameSize, vk, boundToOther))
             {
                 status = InputLookup::Found;
+            }
+            else if (FindDefaultKeyFor(action, outKeyName, outKeyNameSize, vk, boundToOther))
+            {
+                status = InputLookup::FoundDefault;
             }
             else if (boundToOther)
             {
@@ -200,13 +203,14 @@ int ResolveInputHandlerVk(const SDK::UClass* handlerClass, char* outKeyName, siz
         vk     = 0;
     }
 
-    if (status != InputLookup::Found && outKeyName && outKeyNameSize > 0)
+    const bool found = status == InputLookup::Found || status == InputLookup::FoundDefault;
+    if (!found && outKeyName && outKeyNameSize > 0)
         outKeyName[0] = '\0';
     if (outStatus)
         *outStatus = status;
     if (outWhy)
-        *outWhy = status == InputLookup::Found ? nullptr : why;
-    return status == InputLookup::Found ? vk : 0;
+        *outWhy = found ? nullptr : why;
+    return found ? vk : 0;
 }
 
 int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize, InputLookup* outStatus, const char** outWhy)
