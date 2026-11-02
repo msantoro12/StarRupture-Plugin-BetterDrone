@@ -9,10 +9,11 @@
 
 namespace
 {
-    // The stock drone range (BuildingDroneMaxRadius), in metres. Inside it
-    // the game never unloads the parked character's cells, so this keeps the
-    // same ground the stock drone keeps, no more. A shape spans whole cells,
-    // so the loaded patch is a little larger than the circle.
+    // The stock drone range (BuildingDroneMaxRadius), in metres: the
+    // distance the game itself lets the drone fly from the body, and the
+    // ground right around the body that matters on return. Small on purpose;
+    // the game loads far more around a walking player. A shape spans whole
+    // cells, so the loaded patch is a little larger than the circle.
     constexpr float kDefaultRadiusM = 40.0f;
     constexpr float kMinRadiusM     = 20.0f;
     constexpr float kMaxRadiusM     = 200.0f;
