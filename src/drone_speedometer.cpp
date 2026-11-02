@@ -139,6 +139,7 @@ namespace
         float          minWidth[kGameElems] = {};
         SDK::ETextJustify justify[kGameElems] = {};
         SDK::FSlateFontInfo font[kGameElems] = {};
+        SDK::FVector2D shadow[kGameElems] = {};
         SDK::FMargin   padding[kGameElems] = {};   // each digit's slot padding, when in a horizontal box
         bool           measured = false;
         Digits         digits;           // where the readout was when last measured
@@ -467,13 +468,14 @@ namespace
                    : nullptr;
     }
 
-    // A font that draws, and takes, next to no room.
+    // A font and shadow that draw, and take, next to no room.
     void ShrinkFont(SDK::UTextBlock* text)
     {
         SDK::FSlateFontInfo font = text->Font;
         font.Size = 0.0f;
         font.OutlineSettings.OutlineSize = 0;
         text->SetFont(font);
+        text->SetShadowOffset(Vec(0.0, 0.0));
     }
 
     // Holds a readout's row at four digits' width whatever its value. The
@@ -503,6 +505,7 @@ namespace
             row.minWidth[i] = elems[i]->MinDesiredWidth;
             row.justify[i]  = elems[i]->Justification;
             row.font[i]     = elems[i]->Font;
+            row.shadow[i]   = elems[i]->ShadowOffset;
             if (i == 3)
                 continue;
             if (SDK::UHorizontalBoxSlot* slot = BoxSlot(elems[i]))
@@ -516,6 +519,7 @@ namespace
         }
         elems[3]->SetMinDesiredWidth(room);
         elems[3]->SetJustification(SDK::ETextJustify::Right);
+        HideGameDigits(hud, which, true);
         row.pinned   = true;
         row.measured = false;
         return true;
@@ -540,6 +544,7 @@ namespace
                 if (SDK::UHorizontalBoxSlot* slot = BoxSlot(elems[i]))
                     slot->SetPadding(row.padding[i]);
                 elems[i]->SetFont(row.font[i]);
+                elems[i]->SetShadowOffset(row.shadow[i]);
             }
             elems[i]->SetMinDesiredWidth(row.minWidth[i]);
             elems[i]->SetJustification(row.justify[i]);
@@ -597,10 +602,10 @@ namespace
     // Where a row of the readout goes, in the form `panel` takes it: for an
     // overlay slot, the number's gap from the panel's right edge, the unit's
     // gap from its left edge, and both tops as top padding; for a canvas
-    // slot, the positions themselves.
-    // A line drawn from the left has its number's left edge at the digits'
-    // left edge, and its unit `numberWidth` further on, at the gap the HUD
-    // leaves between its digits and its label.
+    // slot, the positions themselves. The number ends at the digits' right
+    // edge; drawn from the left, it starts at their left edge and its unit
+    // sits `numberWidth` further on, at the gap the HUD leaves between its
+    // digits and its label.
     void Anchors(SDK::UPanelWidget* panel, const Digits& d, double rowTop, SDK::FVector2D* number, SDK::FVector2D* unit,
                  bool fromLeft = false, double numberWidth = 0.0)
     {
@@ -942,8 +947,13 @@ namespace
         if (!row.failed && elems[3] && ReadoutShown(elems[3], panel, &rowOpacity) &&
             PlaceOf(row, elems, panel, rowOpacity, &d))
         {
+            // A read that is not a number is missed, not given up on: the
+            // line keeps what it shows.
             if (!GameMetres(elems, which, &metres))
-                row.failed = true;
+            {
+                if (Intact(row.line))
+                    return;
+            }
             else if (!Intact(row.line))
             {
                 SDK::FVector2D numberRoom, unitRoom;
@@ -965,10 +975,12 @@ namespace
                 return;
             }
         }
+        // While the digits are held they stay hidden: only ours can show them.
         ShowLine(row.line, false);
-        HideGameDigits(hud, which, false);
         if (row.failed)
             UnpinDigits(hud, which);
+        if (!row.pinned)
+            HideGameDigits(hud, which, false);
     }
 
     // Shows the speed under the readout. False when it has to be drawn
