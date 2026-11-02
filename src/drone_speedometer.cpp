@@ -421,8 +421,6 @@ namespace
         {
             ForgetLine(row.line);
             row.measured = false;
-            row.pinned   = false;
-            row.hidden   = false;
         }
         g_panel.Reset();
     }
@@ -459,6 +457,16 @@ namespace
         row.hidden = hide;
     }
 
+    // The padding a digit's slot puts around it in a horizontal box, which a
+    // collapsed digit gives up with its width.
+    float SlotGap(const SDK::UWidget* widget)
+    {
+        if (!widget->Slot || !widget->Slot->IsA(SDK::UHorizontalBoxSlot::StaticClass()))
+            return 0.0f;
+        const SDK::FMargin& padding = static_cast<const SDK::UHorizontalBoxSlot*>(widget->Slot)->Padding;
+        return padding.Left + padding.Right;
+    }
+
     // Gives the units digit the room of the leading digits the game has
     // collapsed (it collapses the thousands, hundreds and tens below 1000,
     // 100 and 10 on every tick), so the row keeps four digits' width.
@@ -466,11 +474,10 @@ namespace
     {
         if (!elems[3] || !(row.cell > 0.0f))
             return;
-        int collapsed = 0;
+        float width = row.cell;
         for (int i = 0; i < 3; ++i)
             if (elems[i] && elems[i]->Visibility == SDK::ESlateVisibility::Collapsed)
-                ++collapsed;
-        const float width = row.cell * static_cast<float>(1 + collapsed);
+                width += row.cell + SlotGap(elems[i]);
         if (width != row.unitsWidth)
         {
             elems[3]->SetMinDesiredWidth(width);
