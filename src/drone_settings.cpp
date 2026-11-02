@@ -81,25 +81,47 @@ namespace
         }
     }
 
+    // True while Boost Key follows Sprint and the key is not resolved yet:
+    // OnDroneTick looks again every kSprintRetryMs until it is. Game thread.
+    bool g_sprintPending = false;
+    bool g_sprintFallbackLogged = false;
+    ULONGLONG g_sprintTriedMs = 0;
+    constexpr ULONGLONG kSprintRetryMs = 2000;
+
     // Resolves the game's current Sprint key and caches its VK for
     // OnDroneTick to poll -- following Sprint registers no keybind with the
-    // loader, so nothing else would dispatch it. Falls back to LeftShift,
-    // logged once, if the Sprint action or its binding cannot be found (no
-    // world yet, gamepad-only, etc.); a later re-resolve picks up the real
-    // key once one is available.
-    void ResolveAndCacheSprintKey()
+    // loader, so nothing else would dispatch it. A miss before the world and
+    // its input exist is not an answer: the lookup is repeated on later
+    // ticks. LeftShift stands in, logged once, only when Sprint has no
+    // keyboard binding, or the lookup still misses with the player in the
+    // drone (everything it needs exists by then); a later success replaces it.
+    void ResolveAndCacheSprintKey(bool inDrone)
     {
         char keyName[64] = {};
-        int vk = ResolveSprintVk(keyName, sizeof(keyName));
-        if (vk == 0)
+        InputLookup status = InputLookup::NotReady;
+        const char* why = nullptr;
+        const int vk = ResolveSprintVk(keyName, sizeof(keyName), &status, &why);
+        g_sprintTriedMs = GetTickCount64();
+
+        if (vk != 0)
         {
-            vk = VK_LSHIFT;
-            snprintf(keyName, sizeof(keyName), "LeftShift");
-            LOG_WARN("ResolveAndCacheSprintKey: could not resolve the game's Sprint key, falling back to LeftShift");
+            g_sprintPending = false;
+            if (g_boostKeyVk.exchange(vk, std::memory_order_relaxed) != vk)
+                LOG_INFO("boost key: following Sprint (%s)", keyName);
+            return;
         }
 
-        g_boostKeyVk.store(vk, std::memory_order_relaxed);
-        LOG_INFO("boost key: following Sprint (%s)", keyName);
+        g_sprintPending = status != InputLookup::NoKeyboardBinding;
+        if (status != InputLookup::NoKeyboardBinding && !inDrone)
+            return;
+
+        g_boostKeyVk.store(VK_LSHIFT, std::memory_order_relaxed);
+        if (!g_sprintFallbackLogged)
+        {
+            g_sprintFallbackLogged = true;
+            LOG_WARN("boost key: could not resolve the game's Sprint key (%s), using LeftShift",
+                why ? why : "unknown");
+        }
     }
 
     // A named combo's Released only fires on an exact modifier match
@@ -119,7 +141,9 @@ namespace
         if (strcmp(keyName, DroneConfig::kBoostKeyFollowsSprint) == 0)
         {
             g_boostFollowsSprint.store(true, std::memory_order_relaxed);
-            ResolveAndCacheSprintKey();
+            g_boostKeyVk.store(0, std::memory_order_relaxed);
+            g_sprintFallbackLogged = false;
+            ResolveAndCacheSprintKey(false);
             return;
         }
 
@@ -146,7 +170,7 @@ namespace
         // Picks up an in-game rebind of Sprint made while no drone session
         // was active to observe it via the enter-drone edge below.
         if (g_boostFollowsSprint.load(std::memory_order_relaxed))
-            ResolveAndCacheSprintKey();
+            ResolveAndCacheSprintKey(false);
     }
 
     void OnWorldEndPlay(SDK::UWorld*, const char* worldName)
@@ -661,7 +685,12 @@ void OnDroneTick(float deltaSeconds)
 
         // Picks up an in-game rebind of Sprint made mid-session.
         if (g_boostFollowsSprint.load(std::memory_order_relaxed))
-            ResolveAndCacheSprintKey();
+            ResolveAndCacheSprintKey(true);
+    }
+    else if (g_sprintPending && g_boostFollowsSprint.load(std::memory_order_relaxed) &&
+             GetTickCount64() - g_sprintTriedMs >= kSprintRetryMs)
+    {
+        ResolveAndCacheSprintKey(inDrone);
     }
     // A drone that stays around after the player leaves it goes back to
     // the game's size and mass until the next launch.
