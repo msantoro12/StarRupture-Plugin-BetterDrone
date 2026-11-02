@@ -46,7 +46,7 @@ namespace
     constexpr double kUnitWidthEm   = 3.0;
     constexpr double kTextHeightEm  = 1.5;
 
-    // The width pinned on each of the HUD's digits, in ems of its font: wider
+    // The room each of the HUD's digits is held at, in ems of its font: wider
     // than the widest digit of the proportional font.
     constexpr double kDigitWidthEm = 0.7;
 
@@ -87,6 +87,7 @@ namespace
     // draws there than in its own units.
     struct Digits
     {
+        double left     = 0.0;   // the units digit's left edge, where its room starts
         double right    = 0.0;
         double unitLeft = 0.0;
         double unitDy   = 0.0;
@@ -110,6 +111,7 @@ namespace
         SDK::FVector2D unitRoom   = {};
         std::string    shownNumber;
         std::string    shownUnit;
+        bool           fromLeft = false;   // the number starts at the digits' left edge, the unit follows it
     };
 
     // The HUD's distance and height readouts: each is five elements (T, H, D,
@@ -136,11 +138,8 @@ namespace
         bool           pinned = false;   // the digits have a fixed width, with what each had
         float          minWidth[kGameElems] = {};
         SDK::ETextJustify justify[kGameElems] = {};
-        float          cell = 0.0f;      // the pinned width of one digit
+        SDK::FSlateFontInfo font[kGameElems] = {};
         SDK::FMargin   padding[kGameElems] = {};   // each digit's slot padding, when in a horizontal box
-        bool           boxed[kGameElems] = {};
-        int            leading = -1;     // the digit whose slot is moved left, and by how much
-        float          leadingBy = 0.0f;
         bool           measured = false;
         Digits         digits;           // where the readout was when last measured
         SDK::FVector2D measuredIn = {};  // the panel's size then
@@ -350,6 +349,7 @@ namespace
 
         const SDK::FVector2D size = SDK::USlateBlueprintLibrary::GetLocalSize(digit->GetCachedGeometry());
         out->scale    = (bottomRight.Y - topLeft.Y) / size.Y;
+        out->left     = topLeft.X;
         out->right    = bottomRight.X;
         out->top      = topLeft.Y;
         out->bottom   = bottomRight.Y;
@@ -467,101 +467,61 @@ namespace
                    : nullptr;
     }
 
-    void SetLeadingShift(SDK::UTextBlock* const* elems, FeetRow& row, int leading, float by)
+    // A font that draws, and takes, next to no room.
+    void ShrinkFont(SDK::UTextBlock* text)
     {
-        if (leading == row.leading && by == row.leadingBy)
-            return;
-        if (row.leading >= 0 && row.leading != leading)
-            if (SDK::UHorizontalBoxSlot* slot = BoxSlot(elems[row.leading]))
-                slot->SetPadding(row.padding[row.leading]);
-        if (leading >= 0)
-            if (SDK::UHorizontalBoxSlot* slot = BoxSlot(elems[leading]))
-            {
-                SDK::FMargin padding = row.padding[leading];
-                padding.Left -= by;
-                slot->SetPadding(padding);
-            }
-        row.leading   = leading;
-        row.leadingBy = by;
+        SDK::FSlateFontInfo font = text->Font;
+        font.Size = 0.0f;
+        font.OutlineSettings.OutlineSize = 0;
+        text->SetFont(font);
     }
 
-    // Takes the leading digits the game shows (it collapses the thousands,
-    // hundreds and tens below 1000, 100 and 10 on every tick) out of the
-    // row's width: the first of them starts left by the room they take, so
-    // they reach out to the left and the units digit, the row and the
-    // reticle centred between the rows stay where the game puts them for a
-    // one-digit value.
-    void HoldRowWidth(SDK::UTextBlock* const* elems, FeetRow& row)
-    {
-        int   leading = -1;
-        float by      = 0.0f;
-        for (int i = 0; i < 3; ++i)
-        {
-            if (!elems[i] || !row.boxed[i] || elems[i]->Visibility == SDK::ESlateVisibility::Collapsed)
-                continue;
-            if (leading < 0)
-                leading = i;
-            by += row.cell + row.padding[i].Left + row.padding[i].Right;
-        }
-        SetLeadingShift(elems, row, leading, by);
-    }
-
-    // Gives the readout's digits a fixed width, centred in it, and keeps the
-    // leading digits out of the row's width. The game lays the digits out in
-    // a box with the reticle, so a digit changing width (a "1" for an "8"),
-    // or one more digit shown, re-centred the box and moved the reticle.
-    // False when nothing changed.
+    // Holds a readout's row at four digits' width whatever its value. The
+    // game collapses the thousands, hundreds and tens below 1000, 100 and 10
+    // on every tick of its own, and its rows sit either side of the reticle
+    // in one centred box, so each digit gained or lost moved the reticle.
+    // The leading digits get no size at all, shown or collapsed, and the
+    // units digit holds the room of all four, so the game's writes no longer
+    // change the layout and nothing has to follow them. Our own text draws
+    // the number. False when nothing changed.
     bool PinDigits(SDK::UCrUW_BuildingDroneHud* hud, Row which)
     {
         FeetRow& row = g_rows[static_cast<int>(which)];
-        if (row.pinned)
+        if (row.pinned || row.failed)
             return false;
 
         SDK::UTextBlock* elems[kGameElems] = {};
         RowElems(hud, which, elems);
         if (!elems[3] || !(elems[3]->Font.Size > 0.0f))
             return false;
-        row.cell = static_cast<float>(kDigitWidthEm * elems[3]->Font.Size * 96.0 / 72.0);
+
+        float room = static_cast<float>(4.0 * kDigitWidthEm * elems[3]->Font.Size * 96.0 / 72.0);
         for (int i = 0; i < 4; ++i)
         {
             if (!elems[i])
                 continue;
             row.minWidth[i] = elems[i]->MinDesiredWidth;
             row.justify[i]  = elems[i]->Justification;
-            SDK::UHorizontalBoxSlot* slot = BoxSlot(elems[i]);
-            row.boxed[i] = slot != nullptr;
-            if (slot)
+            row.font[i]     = elems[i]->Font;
+            if (i == 3)
+                continue;
+            if (SDK::UHorizontalBoxSlot* slot = BoxSlot(elems[i]))
+            {
                 row.padding[i] = slot->Padding;
-            elems[i]->SetMinDesiredWidth(row.cell);
-            elems[i]->SetJustification(SDK::ETextJustify::Center);
+                room += slot->Padding.Left + slot->Padding.Right;
+                slot->SetPadding(SDK::FMargin{});
+            }
+            elems[i]->SetMinDesiredWidth(0.0f);
+            ShrinkFont(elems[i]);
         }
-        row.leading   = -1;
-        row.leadingBy = 0.0f;
-        HoldRowWidth(elems, row);
+        elems[3]->SetMinDesiredWidth(room);
+        elems[3]->SetJustification(SDK::ETextJustify::Right);
         row.pinned   = true;
         row.measured = false;
         return true;
     }
 
-    // Every tick: the leading digits the game has shown or collapsed since
-    // the last one.
-    void HoldPinnedRows()
-    {
-        SDK::UCrUW_BuildingDroneHud* hud = g_hud.Get();
-        if (!hud)
-            return;
-        for (int i = 0; i < kRows; ++i)
-        {
-            FeetRow& row = g_rows[i];
-            if (!row.pinned)
-                continue;
-            SDK::UTextBlock* elems[kGameElems] = {};
-            RowElems(hud, static_cast<Row>(i), elems);
-            HoldRowWidth(elems, row);
-        }
-    }
-
-    // Gives the digits the width and alignment they had.
+    // Gives the digits the size, width, padding and alignment they had.
     void UnpinDigits(SDK::UCrUW_BuildingDroneHud* hud, Row which)
     {
         FeetRow& row = g_rows[static_cast<int>(which)];
@@ -571,11 +531,16 @@ namespace
         SDK::UTextBlock* elems[kGameElems] = {};
         if (hud)
             RowElems(hud, which, elems);
-        SetLeadingShift(elems, row, -1, 0.0f);
         for (int i = 0; i < 4; ++i)
         {
             if (!elems[i])
                 continue;
+            if (i != 3)
+            {
+                if (SDK::UHorizontalBoxSlot* slot = BoxSlot(elems[i]))
+                    slot->SetPadding(row.padding[i]);
+                elems[i]->SetFont(row.font[i]);
+            }
             elems[i]->SetMinDesiredWidth(row.minWidth[i]);
             elems[i]->SetJustification(row.justify[i]);
         }
@@ -633,8 +598,18 @@ namespace
     // overlay slot, the number's gap from the panel's right edge, the unit's
     // gap from its left edge, and both tops as top padding; for a canvas
     // slot, the positions themselves.
-    void Anchors(SDK::UPanelWidget* panel, const Digits& d, double rowTop, SDK::FVector2D* number, SDK::FVector2D* unit)
+    // A line drawn from the left has its number's left edge at the digits'
+    // left edge, and its unit `numberWidth` further on, at the gap the HUD
+    // leaves between its digits and its label.
+    void Anchors(SDK::UPanelWidget* panel, const Digits& d, double rowTop, SDK::FVector2D* number, SDK::FVector2D* unit,
+                 bool fromLeft = false, double numberWidth = 0.0)
     {
+        if (fromLeft)
+        {
+            *number = Vec(d.left, rowTop);
+            *unit   = Vec(d.left + numberWidth + (d.unitLeft - d.right), rowTop + d.unitDy);
+            return;
+        }
         *number = Vec(d.right, rowTop);
         *unit   = Vec(d.unitLeft, rowTop + d.unitDy);
         if (IsOverlay(panel))
@@ -650,7 +625,7 @@ namespace
             if (IsOverlay(panel))
             {
                 SDK::FMargin padding{};
-                (i == 0 ? padding.Right : padding.Left) = static_cast<float>(at[i].X);
+                (i == 0 && !line.fromLeft ? padding.Right : padding.Left) = static_cast<float>(at[i].X);
                 padding.Top = static_cast<float>(at[i].Y);
                 static_cast<SDK::UOverlaySlot*>(texts[i]->Slot)->SetPadding(padding);
             }
@@ -736,9 +711,10 @@ namespace
     }
 
     // Adds a line's two text blocks to `panel`, placed for a row at `rowTop`.
-    bool AttachLine(Line& line, SDK::UTextBlock* const* elems, SDK::UPanelWidget* panel, const Digits& d, double rowTop)
+    bool AttachLine(Line& line, SDK::UTextBlock* const* elems, SDK::UPanelWidget* panel, const Digits& d, double rowTop,
+                    bool fromLeft = false)
     {
-        SDK::UTextBlock* number = AddText(panel, elems[3], d.scale, true);
+        SDK::UTextBlock* number = AddText(panel, elems[3], d.scale, !fromLeft);
         SDK::UTextBlock* unit   = number ? AddText(panel, UnitSource(elems), d.scale, false) : nullptr;
         if (!unit)
         {
@@ -752,10 +728,11 @@ namespace
         line.opacity = 1.0f;
         line.shownNumber.clear();
         line.shownUnit.clear();
+        line.fromLeft = fromLeft;
         RoomsFor(elems[3], d, &line.numberRoom, &line.unitRoom);
 
         SDK::FVector2D numberAt, unitAt;
-        Anchors(panel, d, rowTop, &numberAt, &unitAt);
+        Anchors(panel, d, rowTop, &numberAt, &unitAt, fromLeft);
         Place(line, panel, numberAt, unitAt);
         return true;
     }
@@ -899,12 +876,6 @@ namespace
         SDK::UTextBlock* numberText = Ours(line.number);
         SDK::UTextBlock* unitText   = Ours(line.unit);
 
-        SDK::FVector2D numberAt, unitAt;
-        Anchors(panel, d, rowTop, &numberAt, &unitAt);
-        if (std::fabs(numberAt.X - line.numberAt.X) > kMoveEpsilon || std::fabs(numberAt.Y - line.numberAt.Y) > kMoveEpsilon ||
-            std::fabs(unitAt.X - line.unitAt.X) > kMoveEpsilon || std::fabs(unitAt.Y - line.unitAt.Y) > kMoveEpsilon)
-            Place(line, panel, numberAt, unitAt);
-
         if (!SameColour(numberText->ColorAndOpacity, elems[3]->ColorAndOpacity))
             numberText->SetColorAndOpacity(elems[3]->ColorAndOpacity);
         if (!SameColour(unitText->ColorAndOpacity, UnitSource(elems)->ColorAndOpacity))
@@ -928,6 +899,20 @@ namespace
             unitText->SetText(*TextFor(line.shownUnit));
         }
         ShowLine(line, true);
+
+        // The number's width as it will draw this frame, for a unit that
+        // follows it.
+        double numberWidth = 0.0;
+        if (line.fromLeft)
+        {
+            numberText->ForceLayoutPrepass();
+            numberWidth = numberText->GetDesiredSize().X;
+        }
+        SDK::FVector2D numberAt, unitAt;
+        Anchors(panel, d, rowTop, &numberAt, &unitAt, line.fromLeft, numberWidth);
+        if (std::fabs(numberAt.X - line.numberAt.X) > kMoveEpsilon || std::fabs(numberAt.Y - line.numberAt.Y) > kMoveEpsilon ||
+            std::fabs(unitAt.X - line.unitAt.X) > kMoveEpsilon || std::fabs(unitAt.Y - line.unitAt.Y) > kMoveEpsilon)
+            Place(line, panel, numberAt, unitAt);
     }
 
     // Whether either text of a line is larger than the room checked for it.
@@ -938,9 +923,12 @@ namespace
         return n.X > line.numberRoom.X || n.Y > line.numberRoom.Y || u.X > line.unitRoom.X || u.Y > line.unitRoom.Y;
     }
 
-    // While the panel's unit is mph a readout (the distance, the height)
-    // shows in feet, in text of ours over the HUD's digits, which are hidden;
-    // otherwise, or when the digits cannot be read, the HUD's own metres show.
+    // A readout (the distance, the height) in text of ours over the HUD's
+    // digits, which are hidden: in feet while the panel's unit is mph,
+    // otherwise in metres. The height starts where its digits start, next to
+    // its icon, as the game's own row lays it out; the distance ends where
+    // they end, next to its label. A readout that cannot be drawn gives the
+    // game its own digits back for the flight.
     void ShowFeet(SDK::UCrUW_BuildingDroneHud* hud, Row which, SDK::UPanelWidget* panel)
     {
         FeetRow& row = g_rows[static_cast<int>(which)];
@@ -951,29 +939,36 @@ namespace
         float rowOpacity = 1.0f;
         long metres = 0;
         Digits d;
-        if (DistanceInFeet() && !row.failed && elems[3] && ReadoutShown(elems[3], panel, &rowOpacity) &&
-            PlaceOf(row, elems, panel, rowOpacity, &d) && GameMetres(elems, which, &metres))
+        if (!row.failed && elems[3] && ReadoutShown(elems[3], panel, &rowOpacity) &&
+            PlaceOf(row, elems, panel, rowOpacity, &d))
         {
-            if (!Intact(row.line))
+            if (!GameMetres(elems, which, &metres))
+                row.failed = true;
+            else if (!Intact(row.line))
             {
                 SDK::FVector2D numberRoom, unitRoom;
                 RoomsFor(elems[3], d, &numberRoom, &unitRoom);
                 if (!HasRoom(d, d.top, numberRoom, unitRoom, SDK::USlateBlueprintLibrary::GetLocalSize(panel->GetCachedGeometry())) ||
-                    !AttachLine(row.line, elems, panel, d, d.top))
+                    !AttachLine(row.line, elems, panel, d, d.top, which == Row::Height))
                     row.failed = true;
             }
 
-            if (Intact(row.line))
+            if (!row.failed && Intact(row.line))
             {
                 HideGameDigits(hud, which, true);
+                const bool feet = DistanceInFeet();
                 char number[32];
-                snprintf(number, sizeof(number), "%ld", ThreeFigures(static_cast<float>(metres * kFeetPerMetre)));
-                UpdateLine(row.line, elems, panel, d, d.top, rowOpacity, number, "ft");
+                snprintf(number, sizeof(number), "%ld", feet ? ThreeFigures(static_cast<float>(metres * kFeetPerMetre)) : metres);
+                const std::string label = TextOf(elems[4]);
+                UpdateLine(row.line, elems, panel, d, d.top, rowOpacity, number,
+                           feet ? "ft" : label.empty() ? "m" : label.c_str());
                 return;
             }
         }
         ShowLine(row.line, false);
         HideGameDigits(hud, which, false);
+        if (row.failed)
+            UnpinDigits(hud, which);
     }
 
     // Shows the speed under the readout. False when it has to be drawn
@@ -1119,8 +1114,6 @@ void TickDroneSpeedometer()
 {
     if (!g_overlay.IsRegistered())
         return;
-
-    HoldPinnedRows();
 
     const uint64_t now = GetTickCount64();
     if (now < g_nextSampleMs)
