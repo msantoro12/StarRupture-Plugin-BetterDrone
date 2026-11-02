@@ -40,6 +40,9 @@ namespace DroneFields
 	inline auto AbilitySystem     = DRONE_FIELD(ACrCharacterPlayerBase, AbilitySystem);
 
 	// The drone
+	// The drone's own camera. The character has a DroneCamera member too, at
+	// another offset: read each one off its own class.
+	inline auto DroneOwnCamera              = DRONE_FIELD(ACrCharacterDroneBase, DroneCamera);
 	inline auto SphereComponent             = DRONE_FIELD(ACrCharacterDroneBase, SphereComponent);
 	inline auto PlacementDeveloperSettings  = DRONE_FIELD(ACrCharacterDroneBase, PlacementDeveloperSettings);
 	inline auto IdleSound                   = DRONE_FIELD(ACrCharacterDroneBase, IdleSound);
@@ -158,7 +161,7 @@ namespace DroneFields
 		return PluginMap::ResolveFields(scanner, self,
 			BuildingDrone, Status, DroneCamera, DroneCameraColl, IsDead, GemAttributes, MiningComponent,
 			WeaponSystem, WeaponAttributes, AbilitySystem,
-			SphereComponent, PlacementDeveloperSettings, IdleSound, MovementSound, RotationSound, StateAudioComponents,
+			DroneOwnCamera, SphereComponent, PlacementDeveloperSettings, IdleSound, MovementSound, RotationSound, StateAudioComponents,
 			CrChar, CurrentInteractableActor, PlayerControlState, BuildingMenuPlayer,
 			SpeedPerSec, MaxRadius, WarningRadius, MaxHeight, WarningHeight, SphereRadius,
 			FogUncoverRadius, MinFootstepDistance, FogRadiusMultiplier,
@@ -206,7 +209,7 @@ namespace DroneFields
 	{
 		inline PluginMap::Feature MiningLaser{ "mining-laser", "Mining laser",
 			PluginMap::KeysOf(Keys::MineActor, Keys::MineIsm,
-				DroneCamera, GemAttributes, MiningComponent, WeaponSystem, WeaponAttributes, AbilitySystem,
+				DroneOwnCamera, GemAttributes, MiningComponent, WeaponSystem, WeaponAttributes, AbilitySystem,
 				HarvesterMiningDamage, FireRateMod, LastEquippedUnarmed, EquippedWeapon, EquippedItemData,
 				MiningTypeDamage, RoundsPerMinute, BaseRange, MaxStack, CurrentlyMinedOre, MinedOreActor,
 				MinedVeinMaterial, MinedVeinData, VeinResource, VeinGrantCount, OreData, OreResource,

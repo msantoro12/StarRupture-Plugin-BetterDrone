@@ -112,7 +112,7 @@ namespace
     SDK::USceneComponent* Anchor(SDK::ACrCharacterPlayerBase* character)
     {
         SDK::ACrCharacterDroneBase* drone = DroneFields::ValueOr(DroneFields::BuildingDrone, character);
-        return DroneFields::ValueOr(DroneFields::DroneCamera, drone);
+        return DroneFields::ValueOr(DroneFields::DroneOwnCamera, drone);
     }
 
     // A sound on the drone camera, at an offset (KeepRelativeOffset) or at a
