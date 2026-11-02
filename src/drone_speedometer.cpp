@@ -137,7 +137,10 @@ namespace
         float          minWidth[kGameElems] = {};
         SDK::ETextJustify justify[kGameElems] = {};
         float          cell = 0.0f;      // the pinned width of one digit
-        float          unitsWidth = 0.0f;   // the width last given the units digit
+        SDK::FMargin   padding[kGameElems] = {};   // each digit's slot padding, when in a horizontal box
+        bool           boxed[kGameElems] = {};
+        int            leading = -1;     // the digit whose slot is moved left, and by how much
+        float          leadingBy = 0.0f;
         bool           measured = false;
         Digits         digits;           // where the readout was when last measured
         SDK::FVector2D measuredIn = {};  // the panel's size then
@@ -457,39 +460,57 @@ namespace
         row.hidden = hide;
     }
 
-    // The padding a digit's slot puts around it in a horizontal box, which a
-    // collapsed digit gives up with its width.
-    float SlotGap(const SDK::UWidget* widget)
+    SDK::UHorizontalBoxSlot* BoxSlot(SDK::UWidget* widget)
     {
-        if (!widget->Slot || !widget->Slot->IsA(SDK::UHorizontalBoxSlot::StaticClass()))
-            return 0.0f;
-        const SDK::FMargin& padding = static_cast<const SDK::UHorizontalBoxSlot*>(widget->Slot)->Padding;
-        return padding.Left + padding.Right;
+        return widget && widget->Slot && widget->Slot->IsA(SDK::UHorizontalBoxSlot::StaticClass())
+                   ? static_cast<SDK::UHorizontalBoxSlot*>(widget->Slot)
+                   : nullptr;
     }
 
-    // Gives the units digit the room of the leading digits the game has
-    // collapsed (it collapses the thousands, hundreds and tens below 1000,
-    // 100 and 10 on every tick), so the row keeps four digits' width.
+    void SetLeadingShift(SDK::UTextBlock* const* elems, FeetRow& row, int leading, float by)
+    {
+        if (leading == row.leading && by == row.leadingBy)
+            return;
+        if (row.leading >= 0 && row.leading != leading)
+            if (SDK::UHorizontalBoxSlot* slot = BoxSlot(elems[row.leading]))
+                slot->SetPadding(row.padding[row.leading]);
+        if (leading >= 0)
+            if (SDK::UHorizontalBoxSlot* slot = BoxSlot(elems[leading]))
+            {
+                SDK::FMargin padding = row.padding[leading];
+                padding.Left -= by;
+                slot->SetPadding(padding);
+            }
+        row.leading   = leading;
+        row.leadingBy = by;
+    }
+
+    // Takes the leading digits the game shows (it collapses the thousands,
+    // hundreds and tens below 1000, 100 and 10 on every tick) out of the
+    // row's width: the first of them starts left by the room they take, so
+    // they reach out to the left and the units digit, the row and the
+    // reticle centred between the rows stay where the game puts them for a
+    // one-digit value.
     void HoldRowWidth(SDK::UTextBlock* const* elems, FeetRow& row)
     {
-        if (!elems[3] || !(row.cell > 0.0f))
-            return;
-        float width = row.cell;
+        int   leading = -1;
+        float by      = 0.0f;
         for (int i = 0; i < 3; ++i)
-            if (elems[i] && elems[i]->Visibility == SDK::ESlateVisibility::Collapsed)
-                width += row.cell + SlotGap(elems[i]);
-        if (width != row.unitsWidth)
         {
-            elems[3]->SetMinDesiredWidth(width);
-            row.unitsWidth = width;
+            if (!elems[i] || !row.boxed[i] || elems[i]->Visibility == SDK::ESlateVisibility::Collapsed)
+                continue;
+            if (leading < 0)
+                leading = i;
+            by += row.cell + row.padding[i].Left + row.padding[i].Right;
         }
+        SetLeadingShift(elems, row, leading, by);
     }
 
-    // Gives the readout's digits a fixed width, the units digit right aligned
-    // in the room of the digits the game collapses. The game lays the digits
-    // out in a box with the reticle, so a digit changing width (a "1" for an
-    // "8"), or one more digit shown, re-centred the box and moved the
-    // reticle. False when nothing changed.
+    // Gives the readout's digits a fixed width, centred in it, and keeps the
+    // leading digits out of the row's width. The game lays the digits out in
+    // a box with the reticle, so a digit changing width (a "1" for an "8"),
+    // or one more digit shown, re-centred the box and moved the reticle.
+    // False when nothing changed.
     bool PinDigits(SDK::UCrUW_BuildingDroneHud* hud, Row which)
     {
         FeetRow& row = g_rows[static_cast<int>(which)];
@@ -507,18 +528,23 @@ namespace
                 continue;
             row.minWidth[i] = elems[i]->MinDesiredWidth;
             row.justify[i]  = elems[i]->Justification;
+            SDK::UHorizontalBoxSlot* slot = BoxSlot(elems[i]);
+            row.boxed[i] = slot != nullptr;
+            if (slot)
+                row.padding[i] = slot->Padding;
             elems[i]->SetMinDesiredWidth(row.cell);
-            elems[i]->SetJustification(i == 3 ? SDK::ETextJustify::Right : SDK::ETextJustify::Center);
+            elems[i]->SetJustification(SDK::ETextJustify::Center);
         }
-        row.unitsWidth = row.cell;
+        row.leading   = -1;
+        row.leadingBy = 0.0f;
         HoldRowWidth(elems, row);
         row.pinned   = true;
         row.measured = false;
         return true;
     }
 
-    // Every tick: the room of the digits the game has collapsed since the
-    // last one.
+    // Every tick: the leading digits the game has shown or collapsed since
+    // the last one.
     void HoldPinnedRows()
     {
         SDK::UCrUW_BuildingDroneHud* hud = g_hud.Get();
@@ -545,6 +571,7 @@ namespace
         SDK::UTextBlock* elems[kGameElems] = {};
         if (hud)
             RowElems(hud, which, elems);
+        SetLeadingShift(elems, row, -1, 0.0f);
         for (int i = 0; i < 4; ++i)
         {
             if (!elems[i])
