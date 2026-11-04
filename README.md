@@ -136,7 +136,7 @@ Saved presets are in `Plugins\config\BetterDrone-Presets.ini`: `[Speed:<name>]` 
 
 3. After the first launch, set your values in the BetterDrone panel, or edit the INI files above.
 
-> **Requires [StarRupture-ModLoader](https://github.com/AlienXAXS/StarRupture-ModLoader)** to be installed first.
+> **Requires [StarRupture-ModLoader](https://github.com/AlienXAXS/StarRupture-ModLoader) v1.23.0 or later** (interface v74) to be installed first.
 
 ---
 
