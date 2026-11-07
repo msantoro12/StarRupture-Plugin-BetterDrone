@@ -9,6 +9,8 @@
 // widget's geometry, checks that placement against a building marker the game
 // has put on the same map, and publishes plain numbers. The render callback
 // only draws from those numbers.
+//
+// The same tick keeps the map centred on the drone until the player pans it.
 
 struct IPluginSelf;
 

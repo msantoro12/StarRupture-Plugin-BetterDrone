@@ -1,5 +1,6 @@
 Mining laser: hold G in the drone to mine ore with the drill beam (rebindable)
 Drone shows as a marker on the map while you fly
+The map follows the drone while you fly; pan it by hand to stop
 Speed presets: - and = step slower/faster, with a boost speed toast (rebindable)
 BETTER DRONE row added to the pause menu
 Press E in the drone to gather wild plants within gathering range

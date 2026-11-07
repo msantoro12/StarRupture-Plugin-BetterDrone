@@ -1,6 +1,7 @@
 #include "drone_map_marker.h"
 #include "drone_interact.h"
 #include "drone_marker_icon.h"
+#include "object_ref.h"
 #include "overlay_widget.h"
 #include "plugin_helpers.h"
 #include "drone_fields.h"
@@ -39,6 +40,24 @@ namespace
     constexpr int32_t kMaxSaneCount = 100000;
 
     constexpr uint64_t kLogIntervalMs = 5000;
+
+    // Following the drone. The map is moved by a share of the drone's distance
+    // from the canvas centre each tick, not all of it: the cached geometry that
+    // distance is measured from can trail a write by a frame or two, and a full
+    // correction on a trailing measurement overshoots.
+    constexpr double kFollowGain = 0.5;
+
+    // A move of the terrain's slot under this (widget units) is not worth a write.
+    constexpr double kMinMove = 0.1;
+
+    // The slot reads back as it was left within this (widget units, floats).
+    constexpr double kSlotTolerance = 0.5;
+
+    // A correction of at least this many pixels has to show in the terrain's
+    // geometry within kMaxMisses ticks, by a quarter to one and three quarters
+    // of what was asked.
+    constexpr double kCheckPx   = 8.0;
+    constexpr int    kMaxMisses = 3;
 
     // The player marker colour when the game's colour asset is not loaded: the
     // cyan of the player arrow on the map, as an ImGui colour (R 119, G 225, B 233).
@@ -151,24 +170,32 @@ namespace
     }
 
     // A building marker's widget sits with its top-left corner on the building's
-    // world point. -1 when it is hidden or not laid out, else 1 when it is where
-    // the transform says and 0 when it is not.
+    // world point. -1 when it is hidden, not laid out or where the transform puts
+    // it outside the canvas (Slate does not paint it there, so its geometry is
+    // whatever it last was), else 1 when it is where the transform says and 0
+    // when it is not.
     int CompareReference(SDK::UCrUW_MapMenuMarker* marker, double worldX, double worldY, SDK::UObject* ctx,
-                         const Transform& t)
+                         const Transform& t, const Geo& canvas)
     {
+        const double expectedX = t.originX + worldX * t.scale;
+        const double expectedY = t.originY + worldY * t.scale;
+        if (expectedX < canvas.topLeft[0] || expectedX > canvas.topLeft[0] + canvas.absSize[0] ||
+            expectedY < canvas.topLeft[1] || expectedY > canvas.topLeft[1] + canvas.absSize[1])
+            return -1;
+
         Geo g;
         if (!marker || !SampleGeo(marker, ctx, &g) || !g.visible || !LaidOut(g))
             return -1;
 
-        const double dx = t.originX + worldX * t.scale - g.topLeft[0];
-        const double dy = t.originY + worldY * t.scale - g.topLeft[1];
+        const double dx = expectedX - g.topLeft[0];
+        const double dy = expectedY - g.topLeft[1];
         return std::fabs(dx) <= kTolerancePx && std::fabs(dy) <= kTolerancePx ? 1 : 0;
     }
 
     // Looks at up to kMaxReferences building markers the game shows and counts
     // how many sit where the transform puts them.
     void CheckReferences(SDK::UCrUW_MapMenuMapArea* area, SDK::ACrMapMenuDataReplicationHelper* helper,
-                         SDK::UObject* ctx, const Transform& t, int* checked, int* agreed)
+                         SDK::UObject* ctx, const Transform& t, const Geo& canvas, int* checked, int* agreed)
     {
         *checked = 0;
         *agreed  = 0;
@@ -213,7 +240,7 @@ namespace
                         if (bHandle->Index != handle.Index || bHandle->SerialNumber != handle.SerialNumber)
                             continue;
 
-                        const int r = CompareReference(*marker, location->X, location->Y, ctx, t);
+                        const int r = CompareReference(*marker, location->X, location->Y, ctx, t, canvas);
                         if (r >= 0)
                         {
                             ++*checked;
@@ -349,15 +376,224 @@ namespace
                  "terrain transform puts it", checked, kTolerancePx);
     }
 
+    // ---- following the drone ---------------------------------------------------
+    //
+    // While the map is open in drone mode, the terrain widget's canvas slot is
+    // moved so the drone sits at the canvas centre. The drone's pixel is measured
+    // again every tick, so the loop corrects itself and no map maths is needed.
+    // It stops, for the rest of that open, when the slot is somewhere this code
+    // did not leave it (a hand pan, the game's own "Center on player"), when a
+    // write does not move the map the way it was asked to, or when the game's
+    // markers no longer sit where the terrain says.
+
+    struct Follow
+    {
+        bool   stopped;              // off for this open
+        bool   haveSlot;             // the fields below hold last tick's state
+        bool   wrote;                // last tick moved the slot
+        double expectX, expectY;     // where the slot should be now: what this code left in it
+        double beforeX, beforeY;     // where it was before the last write
+        double scale;                // the terrain's render scale, which is the zoom
+        double topLeftX, topLeftY;   // the terrain's geometry last tick, pixels
+        double pendingX, pendingY;   // the pixel move the last write asked for
+        double appliedX, appliedY;   // everything written this open, widget units
+        int    misses;
+    };
+
+    Follow                  g_follow = {};
+    ObjectRef<SDK::UWidget> g_followTerrain;
+
+    struct SlotRead
+    {
+        double x, y;   // the slot's position in the canvas, widget units
+        double scale;  // the widget's render scale
+    };
+
+    // The terrain's canvas slot, or null. Inside the callers' __try.
+    SDK::UCanvasPanelSlot* CanvasSlot(SDK::UWidget* widget)
+    {
+        SDK::UPanelSlot* slot = widget->Slot;
+        if (!slot || !slot->IsA(SDK::UCanvasPanelSlot::StaticClass()))
+            return nullptr;
+
+        return static_cast<SDK::UCanvasPanelSlot*>(slot);
+    }
+
+    bool ReadSlot(SDK::UWidget* widget, SlotRead* out)
+    {
+        __try
+        {
+            SDK::UCanvasPanelSlot* slot = CanvasSlot(widget);
+            if (!slot)
+                return false;
+
+            const SDK::FVector2D position = slot->GetPosition();
+            out->x     = position.X;
+            out->y     = position.Y;
+            out->scale = widget->RenderTransform.Scale.X;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    // Sets the slot's position through the UFunction, so the layout updates, and
+    // reads it back.
+    bool WriteSlot(SDK::UWidget* widget, double x, double y, SlotRead* readBack)
+    {
+        __try
+        {
+            SDK::UCanvasPanelSlot* slot = CanvasSlot(widget);
+            if (!slot)
+                return false;
+
+            SDK::FVector2D position;
+            position.X = x;
+            position.Y = y;
+            slot->SetPosition(position);
+
+            const SDK::FVector2D now = slot->GetPosition();
+            readBack->x     = now.X;
+            readBack->y     = now.Y;
+            readBack->scale = widget->RenderTransform.Scale.X;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    void StopFollow(const char* why)
+    {
+        if (g_follow.stopped)
+            return;
+
+        g_follow.stopped = true;
+        LOG_INFO("DroneMapMarker: map follow off until the map is reopened: %s", why);
+    }
+
+    // Puts back what this code moved, then stops.
+    void UndoFollow(SDK::UWidget* terrainWidget, const char* why)
+    {
+        if (g_follow.stopped || !g_follow.haveSlot || g_followTerrain.Get() != terrainWidget)
+            return;
+
+        SlotRead now, back;
+        if (ReadSlot(terrainWidget, &now))
+            WriteSlot(terrainWidget, now.x - g_follow.appliedX, now.y - g_follow.appliedY, &back);
+        StopFollow(why);
+    }
+
+    void ResetFollow()
+    {
+        g_follow = {};
+        g_followTerrain.Reset();
+    }
+
+    void FollowDrone(SDK::UWidget* terrainWidget, const Geo& terrain, const Geo& canvas, double dronePxX,
+                     double dronePxY)
+    {
+        // A new map widget is a new open.
+        if (g_followTerrain.Get() != terrainWidget)
+        {
+            g_follow = {};
+            g_followTerrain.Set(terrainWidget);
+        }
+
+        Follow& f = g_follow;
+        if (f.stopped)
+            return;
+
+        SlotRead slot;
+        if (!ReadSlot(terrainWidget, &slot))
+        {
+            StopFollow("the map's terrain is not in a canvas panel");
+            return;
+        }
+
+        if (f.haveSlot)
+        {
+            // A zoom moves the slot too, to keep its own centre in place.
+            const bool zoomed = std::fabs(slot.scale - f.scale) > 1e-4;
+            if (!zoomed && (std::fabs(slot.x - f.expectX) > kSlotTolerance ||
+                            std::fabs(slot.y - f.expectY) > kSlotTolerance))
+            {
+                const bool movedBack = f.wrote && std::fabs(slot.x - f.beforeX) <= kSlotTolerance &&
+                                       std::fabs(slot.y - f.beforeY) <= kSlotTolerance &&
+                                       (std::fabs(f.expectX - f.beforeX) > 2.0 * kSlotTolerance ||
+                                        std::fabs(f.expectY - f.beforeY) > 2.0 * kSlotTolerance);
+                StopFollow(movedBack ? "the game put the map back where it was" : "the map was moved by hand");
+                return;
+            }
+
+            // A correction worth seeing has to show in the terrain's geometry.
+            const double asked = std::sqrt(f.pendingX * f.pendingX + f.pendingY * f.pendingY);
+            if (!zoomed && f.wrote && asked >= kCheckPx)
+            {
+                const double moved = ((terrain.topLeft[0] - f.topLeftX) * f.pendingX +
+                                      (terrain.topLeft[1] - f.topLeftY) * f.pendingY) / asked;
+                const double share = moved / asked;
+                f.misses = share < 0.25 || share > 1.75 ? f.misses + 1 : 0;
+                if (f.misses >= kMaxMisses)
+                {
+                    UndoFollow(terrainWidget, "a write does not move the map as asked");
+                    return;
+                }
+            }
+        }
+
+        // Widget units are canvas pixels divided by the DPI scale.
+        const double dpi = canvas.absSize[0] / canvas.localSize[0];
+        const double errX = (canvas.topLeft[0] + canvas.absSize[0] * 0.5 - dronePxX) * kFollowGain;
+        const double errY = (canvas.topLeft[1] + canvas.absSize[1] * 0.5 - dronePxY) * kFollowGain;
+        const double moveX = errX / dpi;
+        const double moveY = errY / dpi;
+
+        f.haveSlot = true;
+        f.wrote    = false;
+        f.scale    = slot.scale;
+        f.topLeftX = terrain.topLeft[0];
+        f.topLeftY = terrain.topLeft[1];
+        f.expectX  = slot.x;
+        f.expectY  = slot.y;
+
+        if (std::fabs(moveX) < kMinMove && std::fabs(moveY) < kMinMove)
+            return;
+
+        SlotRead written;
+        if (!WriteSlot(terrainWidget, slot.x + moveX, slot.y + moveY, &written) ||
+            std::fabs(written.x - (slot.x + moveX)) > 0.05 || std::fabs(written.y - (slot.y + moveY)) > 0.05)
+        {
+            UndoFollow(terrainWidget, "the terrain's slot would not take the new position");
+            return;
+        }
+
+        f.wrote    = true;
+        f.beforeX  = slot.x;
+        f.beforeY  = slot.y;
+        f.expectX  = written.x;
+        f.expectY  = written.y;
+        f.pendingX = errX;
+        f.pendingY = errY;
+        f.appliedX += written.x - slot.x;
+        f.appliedY += written.y - slot.y;
+    }
+
     void TickImpl()
     {
         if (!IsLocalPlayerInDrone())
         {
+            ResetFollow();
             Hide();
             return;
         }
 
         SDK::UCrUW_MapMenu* map = ActiveLocalMap();
+        if (!map)
+            ResetFollow();
         SDK::UCrUW_MapMenuMapArea* area = DroneFields::ValueOr(DroneFields::MapMenuMapArea, map);
         SDK::UCrMapMenuDevSettings* settings = SDK::UCrMapMenuDevSettings::GetDefaultObj();
         auto* terrainWidget = DroneFields::ValueOr(DroneFields::MapTerrain, area);
@@ -387,13 +623,16 @@ namespace
         int checked = 0;
         int agreed  = 0;
         if (helper)
-            CheckReferences(area, helper, pc, t, &checked, &agreed);
+            CheckReferences(area, helper, pc, t, canvas, &checked, &agreed);
         if (checked > 0 && agreed == 0)
         {
+            UndoFollow(terrainWidget, "the map's markers did not move with the terrain");
             LogDisagreement(checked);
             Hide();
             return;
         }
+
+        FollowDrone(terrainWidget, terrain, canvas, t.originX + drone.x * t.scale, t.originY + drone.y * t.scale);
 
         Snapshot s = {};
         s.valid     = true;
