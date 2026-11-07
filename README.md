@@ -89,7 +89,7 @@ Cost: memory and some actor ticks for that area, about what standing there costs
 
 ### System voice from the drone <sup>[✦](#msantoro12)</sup>
 
-The game's system voice (rupture warnings and the other spoken lines) plays from your parked character, so it fades out as the drone flies away. While the drone is out, BetterDrone turns off the distance falloff on the attenuation the game plays those lines with, so you hear them at normal volume however far you are, and puts it back when the drone is recalled. The drone's own sound stays on the drone, and the world around your body stays quiet. No setting.
+The game's system voice (rupture warnings and the other spoken lines) plays from your parked character, so it fades out as the drone flies away. While the drone is out, BetterDrone turns off the distance falloff on the attenuation settings the game plays those lines with, so they stay audible far from your body, and puts them back when the drone is recalled. The game has one such setting for first person and one for third person, and other players' characters may share the third-person one. So when other players are in the game, BetterDrone leaves that one alone, and the voice may still fade when the drone is far out. No setting.
 
 ### Wave shelter <sup>[✦](#msantoro12)</sup>
 

@@ -191,6 +191,9 @@ namespace DroneAudio
         // drone is out, and put back afterwards. The component that plays a
         // line cannot be moved instead: a line starting beyond the falloff
         // range is dropped before the next tick could move it.
+        //
+        // The third-person asset may also serve the other players' characters,
+        // so it is only changed while nobody else is in the session.
         struct AttenuationBits
         {
             bool attenuate;
@@ -220,23 +223,50 @@ namespace DroneAudio
         };
         std::vector<SavedAttenuation> g_savedAttenuation;
 
+        std::vector<SavedAttenuation>::iterator FindSaved(SDK::USoundAttenuation* asset)
+        {
+            auto it = g_savedAttenuation.begin();
+            while (it != g_savedAttenuation.end() && it->asset.Get() != asset)
+                ++it;
+            return it;
+        }
+
+        bool SameBits(const AttenuationBits& a, const AttenuationBits& b)
+        {
+            return a.attenuate == b.attenuate && a.spatialize == b.spatialize &&
+                   a.lowPass == b.lowPass && a.occlusion == b.occlusion;
+        }
+
         void RemoveFalloff(SDK::USoundAttenuation* asset)
         {
             if (!asset) return;
 
-            bool known = false;
-            for (const SavedAttenuation& saved : g_savedAttenuation)
-                known = known || saved.asset.Get() == asset;
-            if (!known)
+            if (FindSaved(asset) == g_savedAttenuation.end())
             {
                 g_savedAttenuation.push_back({ ObjectRef<SDK::USoundAttenuation>(asset), ReadBits(asset->Attenuation) });
                 LOG_INFO("DroneAudio: the system voice plays without distance falloff while the drone is out");
             }
 
-            WriteBits(asset->Attenuation, AttenuationBits{ false, false, false, false });
+            const AttenuationBits off{ false, false, false, false };
+            if (!SameBits(ReadBits(asset->Attenuation), off))
+                WriteBits(asset->Attenuation, off);
         }
 
-        void RestoreFalloff()
+        // Puts one asset back, if it was changed.
+        void RestoreFalloff(SDK::USoundAttenuation* asset)
+        {
+            if (!asset) return;
+
+            auto it = FindSaved(asset);
+            if (it == g_savedAttenuation.end())
+                return;
+
+            WriteBits(asset->Attenuation, it->original);
+            g_savedAttenuation.erase(it);
+            LOG_INFO("DroneAudio: the system voice keeps the game's own falloff on an asset shared with other players");
+        }
+
+        void RestoreAllFalloff()
         {
             for (const SavedAttenuation& saved : g_savedAttenuation)
             {
@@ -246,6 +276,15 @@ namespace DroneAudio
             if (!g_savedAttenuation.empty())
                 LOG_INFO("DroneAudio: the system voice plays with the game's own falloff again");
             g_savedAttenuation.clear();
+        }
+
+        // True unless the local player is the only one in the session. A missing
+        // game state or an empty player list (the world is being torn down)
+        // counts as others being present.
+        bool OthersInSession()
+        {
+            SDK::UWorld* world = PluginSdkRuntime::GetWorld();
+            return !world || !world->GameState || world->GameState->PlayerArray.Num() != 1;
         }
     }
 
@@ -342,18 +381,27 @@ namespace DroneAudio
         SDK::ACrCharacterPlayerBase* character = LocalPlayerCharacter();
         if (!character || DroneFields::Dead(character) || !DroneFields::InDrone(character))
         {
-            RestoreFalloff();
+            RestoreAllFalloff();
             return;
         }
 
-        RemoveFalloff(DroneFields::ValueOr(DroneFields::AttenuationFPP, character));
-        RemoveFalloff(DroneFields::ValueOr(DroneFields::AttenuationTPP, character));
+        SDK::USoundAttenuation* fpp = DroneFields::ValueOr(DroneFields::AttenuationFPP, character);
+        SDK::USoundAttenuation* tpp = DroneFields::ValueOr(DroneFields::AttenuationTPP, character);
+
+        // One asset under both names counts as the shared one.
+        if (fpp != tpp)
+            RemoveFalloff(fpp);
+
+        if (OthersInSession())
+            RestoreFalloff(tpp);
+        else
+            RemoveFalloff(tpp);
     }
 
     void ShutdownAnnouncer()
     {
         if (OnGameThread())
-            RestoreFalloff();
+            RestoreAllFalloff();
         else if (!g_savedAttenuation.empty())
             LOG_WARN("DroneAudio: shut down off the game thread with the system voice falloff off; it stays off until the game restarts");
 
