@@ -1,5 +1,6 @@
 #include "drone_audio.h"
 #include "drone_config.h"
+#include "drone_interact.h"
 #include "object_ref.h"
 #include "plugin_helpers.h"
 #include "drone_fields.h"
@@ -181,6 +182,71 @@ namespace DroneAudio
             for (int v = 0; v < kVolCount; ++v)
                 g_vol[v].store(DroneConfig::Config::ReadPanel(DroneConfig::AudioVolumeId(v)), std::memory_order_relaxed);
         }
+
+        // The system voice is a sound on the parked body, attenuated by its
+        // distance to the listener, which is the drone camera. Each line
+        // reads the character's attenuation asset when it starts, so the
+        // distance falloff, the panning and the occlusion check against the
+        // terrain in between are switched off on the asset itself while the
+        // drone is out, and put back afterwards. The component that plays a
+        // line cannot be moved instead: a line starting beyond the falloff
+        // range is dropped before the next tick could move it.
+        struct AttenuationBits
+        {
+            bool attenuate;
+            bool spatialize;
+            bool lowPass;
+            bool occlusion;
+        };
+
+        AttenuationBits ReadBits(const SDK::FSoundAttenuationSettings& settings)
+        {
+            return { settings.bAttenuate != 0, settings.bSpatialize != 0,
+                     settings.bAttenuateWithLPF != 0, settings.bEnableOcclusion != 0 };
+        }
+
+        void WriteBits(SDK::FSoundAttenuationSettings& settings, const AttenuationBits& bits)
+        {
+            settings.bAttenuate        = bits.attenuate;
+            settings.bSpatialize       = bits.spatialize;
+            settings.bAttenuateWithLPF = bits.lowPass;
+            settings.bEnableOcclusion  = bits.occlusion;
+        }
+
+        struct SavedAttenuation
+        {
+            ObjectRef<SDK::USoundAttenuation> asset;
+            AttenuationBits original;
+        };
+        std::vector<SavedAttenuation> g_savedAttenuation;
+
+        void RemoveFalloff(SDK::USoundAttenuation* asset)
+        {
+            if (!asset) return;
+
+            bool known = false;
+            for (const SavedAttenuation& saved : g_savedAttenuation)
+                known = known || saved.asset.Get() == asset;
+            if (!known)
+            {
+                g_savedAttenuation.push_back({ ObjectRef<SDK::USoundAttenuation>(asset), ReadBits(asset->Attenuation) });
+                LOG_INFO("DroneAudio: the system voice plays without distance falloff while the drone is out");
+            }
+
+            WriteBits(asset->Attenuation, AttenuationBits{ false, false, false, false });
+        }
+
+        void RestoreFalloff()
+        {
+            for (const SavedAttenuation& saved : g_savedAttenuation)
+            {
+                if (SDK::USoundAttenuation* asset = saved.asset.Get())
+                    WriteBits(asset->Attenuation, saved.original);
+            }
+            if (!g_savedAttenuation.empty())
+                LOG_INFO("DroneAudio: the system voice plays with the game's own falloff again");
+            g_savedAttenuation.clear();
+        }
     }
 
     void Initialize()
@@ -269,5 +335,28 @@ namespace DroneAudio
             g_stationApplyTimer = 0.0f;
             ApplyStationVolumes();
         }
+    }
+
+    void TickAnnouncer()
+    {
+        SDK::ACrCharacterPlayerBase* character = LocalPlayerCharacter();
+        if (!character || DroneFields::Dead(character) || !DroneFields::InDrone(character))
+        {
+            RestoreFalloff();
+            return;
+        }
+
+        RemoveFalloff(DroneFields::ValueOr(DroneFields::AttenuationFPP, character));
+        RemoveFalloff(DroneFields::ValueOr(DroneFields::AttenuationTPP, character));
+    }
+
+    void ShutdownAnnouncer()
+    {
+        if (OnGameThread())
+            RestoreFalloff();
+        else if (!g_savedAttenuation.empty())
+            LOG_WARN("DroneAudio: shut down off the game thread with the system voice falloff off; it stays off until the game restarts");
+
+        g_savedAttenuation.clear();
     }
 }

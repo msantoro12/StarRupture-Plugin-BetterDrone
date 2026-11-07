@@ -23,4 +23,10 @@ namespace DroneAudio
     // the panel's own master control) straight into the atomic, without
     // re-reading the config file. Requests the next tick apply it.
     void SetVolume(const char* key, float value);
+
+    // While the drone is out, the player's system voice plays without distance
+    // falloff, so it is heard however far the drone is from the parked body.
+    // Tick on the game thread; Shutdown puts the game's own settings back.
+    void TickAnnouncer();
+    void ShutdownAnnouncer();
 }

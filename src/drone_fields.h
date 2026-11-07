@@ -50,6 +50,10 @@ namespace DroneFields
 	inline auto RotationSound               = DRONE_FIELD(ACrCharacterDroneBase, RotationSound);
 	inline auto StateAudioComponents        = DRONE_FIELD(ACrBuildingActorBase, StateAudioComponents);
 
+	// The attenuation the player character plays its system voice with.
+	inline auto AttenuationFPP = DRONE_FIELD(ACrCharacterPlayerBase, AttenuationFPP);
+	inline auto AttenuationTPP = DRONE_FIELD(ACrCharacterPlayerBase, AttenuationTPP);
+
 	// The player controller. PlayerControlState has no member in the Game-SDK
 	// (it sits in padding), so it is a native field: the loader's row for the
 	// running build, or none and the plugin is refused.
@@ -169,6 +173,7 @@ namespace DroneFields
 			BuildingDrone, Status, DroneCamera, DroneCameraColl, IsDead, GemAttributes, MiningComponent,
 			WeaponSystem, WeaponAttributes, AbilitySystem,
 			DroneOwnCamera, SphereComponent, PlacementDeveloperSettings, IdleSound, MovementSound, RotationSound, StateAudioComponents,
+				AttenuationFPP, AttenuationTPP,
 			CrChar, CurrentInteractableActor, PlayerControlState, BuildingMenuPlayer,
 			SpeedPerSec, MaxRadius, WarningRadius, MaxHeight, WarningHeight, SphereRadius,
 			FogUncoverRadius, MinFootstepDistance, FogRadiusMultiplier,
@@ -278,10 +283,15 @@ namespace DroneFields
 			PluginMap::KeysOf(IdleSound, MovementSound, RotationSound, StateAudioComponents),
 			{} };
 
+		inline PluginMap::Feature Announcer{ "announcer-audio", "System voice heard while the drone is out",
+			PluginMap::KeysOf(AttenuationFPP, AttenuationTPP),
+			{} };
+
 		// Declares them all. Call first in OnPluginLoadHooks.
 		inline bool Declare(IPluginSelf* self, IPluginHookScanner* scanner)
 		{
 			return PluginMap::DeclareFeatures(scanner, self, MiningLaser, MapReveal, MapMarker, Limits, SprintKey,
+				Announcer,
 				AlwaysAllow, WaveShelter, Interaction, MapOpen, BuildMenu, Speedometer, SpeedometerHeight, Audio);
 		}
 	}
