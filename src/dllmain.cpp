@@ -121,6 +121,18 @@ static void OnConfigChanged(const char* section, const char* key, const char* ne
         return;
     }
 
+    if (strcmp(section, "Controls") == 0 && strcmp(key, "Slow Key") == 0)
+    {
+        if (!DroneFields::Features::Limits.On())
+            return;
+
+        // Re-registered for the same reason as Boost Key: its Released is
+        // registered under the bare base key.
+        RebindSlowKey(g_self, newValue);
+        LOG_DEBUG("OnConfigChanged: Slow Key rebound to '%s'", newValue ? newValue : "");
+        return;
+    }
+
     if (strcmp(section, "Controls") == 0 && strcmp(key, "Mining Laser Key") == 0)
     {
         if (!DroneFields::Features::MiningLaser.On())
@@ -211,7 +223,10 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     if (DroneFields::Features::BuildMenu.On())
         InitDroneBuildMenu();
     if (DroneFields::Features::Limits.On())
+    {
         RegisterBoostKey(self);
+        RegisterSlowKey(self);
+    }
 
     if (self->hooks->UI)
     {
@@ -227,7 +242,10 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     LOG_DEBUG("PluginShutdown: restoring CDO defaults and unregistering hooks");
 
     if (DroneFields::Features::Limits.On())
+    {
         UnregisterBoostKey(g_self);
+        UnregisterSlowKey(g_self);
+    }
     ShutdownDroneBodyAnchor();
     if (DroneFields::Features::MiningLaser.On())
         ShutdownDroneLaser(g_self);

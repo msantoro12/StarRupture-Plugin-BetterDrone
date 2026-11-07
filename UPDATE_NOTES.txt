@@ -17,3 +17,4 @@ Drone HUD distance and height show in feet when the speed unit is mph, in metres
 The drone HUD ring stays centred on the crosshair as the distance and height change
 Boost follows your Sprint key as soon as the game has it, instead of staying on LeftShift
 Reload (R, or your Reload key) in the drone vents the mining laser's heat like the mining tool's R, with the game's own timing (silent)
+Hold Ctrl (rebindable) in the drone to fly slower, by the new Slow Multiplier row; it wins over Boost

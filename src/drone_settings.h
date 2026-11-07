@@ -59,5 +59,9 @@ void UnregisterBoostKey(IPluginSelf* self);
 // since nothing is ever registered under that name.
 void RebindBoostKey(IPluginSelf* self, const char* newKeyName);
 
-// Call whenever the boost key name changes.
-void UpdateBoostKeyCache(const char* keyName);
+// The Slow key: held in the drone, the speed is the base speed times Slow
+// Multiplier (and wins over Boost). Always a literal key, never the game's.
+// RebindSlowKey is the live-rebind counterpart of RebindBoostKey.
+void RegisterSlowKey(IPluginSelf* self);
+void UnregisterSlowKey(IPluginSelf* self);
+void RebindSlowKey(IPluginSelf* self, const char* newKeyName);

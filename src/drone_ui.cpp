@@ -133,6 +133,7 @@ namespace
     constexpr FieldUnitScale kSphereScale = { "%.0f cm", 1.0f, 1.0f, 5.0f, 20.0f, 50.0f };
 
     constexpr FieldUnitScale kBoostScale = { "%.1fx", 1.0f, 0.5f, 1.0f, 1.0f, 10.0f };
+    constexpr FieldUnitScale kSlowScale  = { "%.2fx", 1.0f, 0.05f, 0.25f, 0.05f, 1.0f };
 
     // Volume is already a plain 0..1 fraction, so RenderScaledRow's engine
     // unit and slider range are used as-is (factor 1.0, no conversion).
@@ -1285,6 +1286,17 @@ void RenderDronePanel(IModLoaderImGui* ui)
             PanelSettings::SetLive(PanelFloat::BoostMultiplier, newBoost);
             if (boostCommit)
                 PanelSettings::Commit(PanelFloat::BoostMultiplier);
+        }
+
+        float newSlow = 0.0f;
+        bool  slowCommit = false;
+        if (RenderScaledRow(ui, "##slow", "Slow Multiplier", "Speed multiplier while the Slow key is held. Wins over Boost when both are held. Set the Slow key on the ModLoader settings page.",
+                             DroneConfig::Config::ReadSlowMultiplier(), DroneConfig::Config::DefaultSlowMultiplier(),
+                             kSlowScale, &newSlow, &slowCommit))
+        {
+            PanelSettings::SetLive(PanelFloat::SlowMultiplier, newSlow);
+            if (slowCommit)
+                PanelSettings::Commit(PanelFloat::SlowMultiplier);
         }
 
         ui->EndTable();

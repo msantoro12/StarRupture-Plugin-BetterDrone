@@ -18,7 +18,7 @@ Opens with **F10** (rebindable on the loader's Config page, Controls), the **BET
 
 <a href="images/panel.png"><img src="images/panel.png" width="480" alt="The BetterDrone panel"></a>
 
-- **Rows:** Drone Speed, Acceleration, Deceleration, Boost Multiplier, Max Radius, Max Height, Drone Size, and a collapsed Audio section (Master, Idle, Movement, Rotation, Station volume; Master sets the rest). Each has a slider, a number box (typed values clamp to the ranges below) and a reset arrow (default; the game's own value for speed, radius and height).
+- **Rows:** Drone Speed, Acceleration, Deceleration, Boost Multiplier, Slow Multiplier, Max Radius, Max Height, Drone Size, and a collapsed Audio section (Master, Idle, Movement, Rotation, Station volume; Master sets the rest). Each has a slider, a number box (typed values clamp to the ranges below) and a reset arrow (default; the game's own value for speed, radius and height).
 - **Drone Size:** the drone's collision radius, 20 to 50 cm (stock 50). A smaller drone fits through ladder holes and gaps. Its weight stays the same, so speed does not change with size. <sup>[✦](#msantoro12)</sup>
 - **Speed Display Unit:** **km/h** (default), **mph** or **cm/s** (1000 cm/s = 36 km/h = 22.4 mph). Sets the speed, acceleration (km/h/s, mph/s, cm/s²) and range (m, ft, cm) rows, the toast, the speedometer, and the HUD's distance and height readouts, which show in feet with **mph** and in metres otherwise.
 - **Speedometer** (on by default): the drone's speed under the HUD's distance readout, its number lined up with the distance digits and its unit under the "m", so it keeps its place as the numbers change, in the readout's own font. While it shows, the HUD's ring stays centred on the crosshair whatever the distance and height read. <sup>[✦](#msantoro12)</sup>
@@ -38,6 +38,10 @@ Speed presets cover the first three columns, range presets the last two. Stock r
 ### Boost <sup>[✦](#msantoro12)</sup>
 
 Hold the boost key (default: your game's Sprint key, rebinds included; LeftShift if unreadable; rebindable on the loader's Config page, Controls) to multiply speed by Boost Multiplier (1 to 10x, default 2x), up to 20000 cm/s. Acceleration and deceleration ramp it on and off. A new base speed applies at once.
+
+### Slow <sup>[✦](#msantoro12)</sup>
+
+Hold the slow key (default: LeftControl; rebindable on the loader's Config page, Controls) to fly at Slow Multiplier (0.05 to 1x, default 0.25x) of your speed, for when you need to creep. Acceleration and deceleration ramp it on and off. With Boost held too, Slow wins: speed is the base speed times Slow Multiplier. If the game's own drone Up or Down key is the same key, the log says so; pick another.
 
 ### Preset hotkeys and toast <sup>[✦](#msantoro12)</sup>
 
@@ -106,6 +110,7 @@ Config is stored in `Plugins\config\BetterDrone.ini` and is generated on first l
 | `[Interaction]` | `Drone Reveals Map` | `false` | Flying uncovers the map |
 | `[Controls]` | `Toggle Key` | `F10` | Panel (BetterCheats' default too) |
 | `[Controls]` | `Boost Key` | `Sprint` | Held to boost; `Sprint` follows your Sprint key |
+| `[Controls]` | `Slow Key` | `LeftControl` | Held to slow down; wins over Boost |
 | `[Controls]` | `Previous Preset Key` | `Hyphen` | Slower speed preset |
 | `[Controls]` | `Next Preset Key` | `Equals` | Faster speed preset |
 | `[Controls]` | `Mining Laser Key` | `G` | Held to mine |
@@ -119,6 +124,7 @@ Panel values are saved to `Plugins\config\BetterDrone-Panel.ini`, clamped to the
 | `[Drone]` | `MaxHeight` | 100 to 500000 cm | the game's own (3500) |
 | `[Drone]` | `SphereRadius` | 20 to 50 cm | `50` |
 | `[Controls]` | `BoostMultiplier` | 1 to 10 | `2` |
+| `[Controls]` | `SlowMultiplier` | 0.05 to 1 | `0.25` |
 | `[Controls]` | `Acceleration`, `Deceleration` | 4000 to 50000 cm/s² | `4000` |
 | `[Audio]` | `IdleVolume`, `MovementVolume`, `RotationVolume`, `StationVolume` | 0 to 1 | `1` |
 | `[UI]` | `SpeedUnit` | `km/h`, `mph`, `cm/s` | `km/h` |

@@ -15,7 +15,7 @@ namespace DroneConfig
     enum class PanelFloat : int
     {
         SpeedPerSec, MaxRadius, MaxHeight, SphereRadius,
-        BoostMultiplier, Acceleration, Deceleration,
+        BoostMultiplier, SlowMultiplier, Acceleration, Deceleration,
         IdleVolume, MovementVolume, RotationVolume, StationVolume,
         Count
     };
@@ -52,6 +52,9 @@ namespace DroneConfig
         // other value is a custom combo. Never empty.
         static void ReadBoostKey(char* outBuffer, int bufferSize);
 
+        // Always a literal key, never the game's.
+        static void ReadSlowKey(char* outBuffer, int bufferSize);
+
         // Panel-only settings: stored in BetterDrone-Panel.ini, which the
         // loader never rewrites, and cached in memory (loaded once in
         // Initialize) so the tick path never touches the file. ReadPanel
@@ -80,6 +83,7 @@ namespace DroneConfig
         static float ReadMaxHeight();
         static float ReadSphereRadius();
         static float ReadBoostMultiplier();
+        static float ReadSlowMultiplier();
         static float ReadAcceleration();
         static float ReadDeceleration();
 
@@ -98,6 +102,7 @@ namespace DroneConfig
         // MaxRadius, MaxHeight and SphereRadius instead reset to DroneSettings::orig*, the
         // stock CDO values captured in InitDroneSettings).
         static float DefaultBoostMultiplier();
+        static float DefaultSlowMultiplier();
 
         // Backed by kDefaultAccelDecel in drone_config.cpp, the one place
         // that value is chosen -- see the comment there for why. Also the

@@ -238,7 +238,7 @@ namespace DroneFields
 		inline PluginMap::Feature Limits{ "drone-limits", "Drone speed, boost, size and limits",
 			PluginMap::KeysOf(PlacementDeveloperSettings, SpeedPerSec, MaxRadius, WarningRadius, MaxHeight,
 				WarningHeight, SphereRadius, SphereComponent),
-			{ "Controls.Boost Key" } };
+			{ "Controls.Boost Key", "Controls.Slow Key" } };
 
 		inline PluginMap::Feature SprintKey{ "sprint-key", "Following the game's Sprint key",
 			PluginMap::KeysOf(NativeInputActions, NativeInputAction, NativeInputHandler, NativeInputActionSize),

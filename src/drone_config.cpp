@@ -24,6 +24,8 @@ namespace DroneConfig
         constexpr float kMaxSphereRadius     = 50.0f;   // the stock radius
         constexpr float kMinBoostMultiplier  = 1.0f;
         constexpr float kMaxBoostMultiplier  = 10.0f;
+        constexpr float kMinSlowMultiplier   = 0.05f;
+        constexpr float kMaxSlowMultiplier   = 1.0f;
 
         // The drone has no movement component (no UFloatingPawnMovement or
         // similar on ACrCharacterDroneBase/ABP_FloatingDrone_C -- checked the
@@ -192,6 +194,7 @@ namespace DroneConfig
             { "Drone",    "MaxHeight",       kMinHeight,          kMaxHeightBound,     3500.0f },
             { "Drone",    "SphereRadius",    kMinSphereRadius,    kMaxSphereRadius,    kMaxSphereRadius },
             { "Controls", "BoostMultiplier", kMinBoostMultiplier, kMaxBoostMultiplier, 2.0f    },
+            { "Controls", "SlowMultiplier",  kMinSlowMultiplier,  kMaxSlowMultiplier,  0.25f   },
             { "Controls", "Acceleration",    kMinAccelDecel,      kMaxAccelDecel,      kDefaultAccelDecel },
             { "Controls", "Deceleration",    kMinAccelDecel,      kMaxAccelDecel,      kDefaultAccelDecel },
             { "Audio", DroneAudio::kVolumeKeys[DroneAudio::kVolIdle],     kMinVolume, kMaxVolume, 1.0f },
@@ -399,6 +402,7 @@ namespace DroneConfig
             // to every plugin registered on it, not just one, so this is safe.
             { "Controls",    "Toggle Key",             ConfigValueType::Keybind, "F10",        "Key to toggle the BetterDrone menu window", 0.0f, 0.0f },
             { "Controls",    "Boost Key",              ConfigValueType::Keybind, kBoostKeyFollowsSprint, "Key held to boost drone speed, following your Sprint key unless you set one here.", 0.0f, 0.0f },
+            { "Controls",    "Slow Key",               ConfigValueType::Keybind, "LeftControl", "Key held to slow the drone to Slow Multiplier of its speed. Wins over Boost when both are held.", 0.0f, 0.0f },
             { "Controls",    "Previous Preset Key",    ConfigValueType::Keybind, "Hyphen",    "Key that steps to the next slower speed preset while the drone is out.", 0.0f, 0.0f },
             { "Controls",    "Next Preset Key",        ConfigValueType::Keybind, "Equals",    "Key that steps to the next faster speed preset while the drone is out.", 0.0f, 0.0f },
             { "Controls",    "Mining Laser Key",       ConfigValueType::Keybind, "G",         "Key held to mine the ore under the crosshair from the drone, with the mining tool's damage and range. Host and single player only.", 0.0f, 0.0f },
@@ -473,6 +477,11 @@ namespace DroneConfig
         ReadKeybind(s_self, "Controls", "Boost Key", kBoostKeyFollowsSprint, outBuffer, bufferSize);
     }
 
+    void Config::ReadSlowKey(char* outBuffer, int bufferSize)
+    {
+        ReadKeybind(s_self, "Controls", "Slow Key", "LeftControl", outBuffer, bufferSize);
+    }
+
     float Config::ReadPanel(PanelFloat id)                  { return Panel(id).Read(); }
     float Config::SetPanelLive(PanelFloat id, float value)  { return Panel(id).SetLive(value); }
     void  Config::PersistPanel(PanelFloat id)               { Panel(id).Persist(); }
@@ -495,10 +504,12 @@ namespace DroneConfig
     float Config::ReadMaxHeight()        { return ReadPanel(PanelFloat::MaxHeight); }
     float Config::ReadSphereRadius()     { return ReadPanel(PanelFloat::SphereRadius); }
     float Config::ReadBoostMultiplier()  { return ReadPanel(PanelFloat::BoostMultiplier); }
+    float Config::ReadSlowMultiplier()   { return ReadPanel(PanelFloat::SlowMultiplier); }
     float Config::ReadAcceleration()     { return ReadPanel(PanelFloat::Acceleration); }
     float Config::ReadDeceleration()     { return ReadPanel(PanelFloat::Deceleration); }
 
     float Config::DefaultBoostMultiplier() { return DefOf(PanelFloat::BoostMultiplier).defaultValue; }
+    float Config::DefaultSlowMultiplier() { return DefOf(PanelFloat::SlowMultiplier).defaultValue; }
     float Config::DefaultAcceleration() { return kDefaultAccelDecel; }
     float Config::DefaultDeceleration() { return kDefaultAccelDecel; }
 
