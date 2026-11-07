@@ -707,8 +707,10 @@ void OnDroneTick(float deltaSeconds)
     if (boostActive != g_boostWasActive)
     {
         g_boostWasActive = boostActive;
+        const float boostSpeed = std::fmin(baseSpeed * DroneConfig::Config::ReadBoostMultiplier(),
+                                           DroneConfig::Config::MaxSpeedPerSec());
         LOG_INFO("OnDroneTick: boost %s, target=%.0f cm/s",
-            boostActive ? "engaged" : "disengaged", targetSpeed);
+            boostActive ? "engaged" : "disengaged", boostSpeed);
     }
 
     if (slowActive != g_slowWasActive)

@@ -31,14 +31,14 @@ public:
     // The keybind callback's body.
     void OnEvent(EModKeyEvent event);
 
-    // Held now: the loader's flag, or, in the drone and with the game in
-    // front, the polled key.
+    // Held now: the loader's flag (cleared when the polled key is up), or,
+    // in the drone and with the game in front, the polled key.
     bool Held(bool inDrone) const;
 
 private:
     const char*                  m_label;
     const std::atomic<bool>&     m_inDrone;
-    std::atomic<bool>            m_held{ false };
+    mutable std::atomic<bool>    m_held{ false };
     std::atomic<int>             m_vk{ 0 };
     PluginKeybindCallback        m_callback = nullptr;
 

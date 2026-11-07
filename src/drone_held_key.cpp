@@ -33,6 +33,7 @@ void HeldKey::Unregister(IPluginSelf* self)
 
     m_pressedName[0]  = '\0';
     m_releasedName[0] = '\0';
+    SetVk(0);
 }
 
 void HeldKey::OnEvent(EModKeyEvent event)
@@ -52,11 +53,21 @@ void HeldKey::OnEvent(EModKeyEvent event)
 
 bool HeldKey::Held(bool inDrone) const
 {
-    bool held = m_held.load(std::memory_order_relaxed);
-    if (!held && inDrone)
+    const int vk = m_vk.load(std::memory_order_relaxed);
+
+    if (m_held.load(std::memory_order_relaxed))
     {
-        const int vk = m_vk.load(std::memory_order_relaxed);
-        held = vk != 0 && (GetAsyncKeyState(vk) & 0x8000) != 0 && GameHasFocus();
+        // A release the loader never delivered (alt-tab, a modal, the typing
+        // gate) would leave the flag set. The physical state needs no focus,
+        // so a single key that is up clears it. A combo has no VK and keeps
+        // the flag alone.
+        if (vk != 0 && (GetAsyncKeyState(vk) & 0x8000) == 0)
+        {
+            m_held.store(false, std::memory_order_relaxed);
+            return false;
+        }
+        return true;
     }
-    return held;
+
+    return inDrone && vk != 0 && (GetAsyncKeyState(vk) & 0x8000) != 0 && GameHasFocus();
 }

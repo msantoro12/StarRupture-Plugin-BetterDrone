@@ -41,7 +41,7 @@ Hold the boost key (default: your game's Sprint key, rebinds included; LeftShift
 
 ### Slow <sup>[✦](#msantoro12)</sup>
 
-Hold the slow key (default: LeftControl; rebindable on the loader's Config page, Controls) to fly at Slow Multiplier (0.05 to 1x, default 0.25x) of your speed, for when you need to creep. Acceleration and deceleration ramp it on and off. With Boost held too, Slow wins: speed is the base speed times Slow Multiplier. If the game's own drone Up or Down key is the same key, the log says so; pick another.
+Hold the slow key (default: LeftControl; rebindable on the loader's Config page, Controls) to fly at Slow Multiplier (0.05 to 1x, default 0.25x) of your speed, for when you need to creep. Acceleration and deceleration ramp it on and off. With Boost held too, Slow wins: speed is the base speed times Slow Multiplier. If the game's own drone Up or Down key is the same key, BetterDrone logs a warning; pick another.
 
 ### Preset hotkeys and toast <sup>[✦](#msantoro12)</sup>
 
