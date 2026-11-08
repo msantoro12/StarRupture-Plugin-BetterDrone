@@ -25,6 +25,13 @@
 
 #define DRONE_FIELD(Class, Member) SR_FIELD(decltype(SDK::Class::Member), Class, Member, 0)
 
+// The map area's pan and zoom: a native UE::Math::TMatrix<float>, row major,
+// scale on the diagonal and the translation in the last row.
+struct MapAreaMatrixData
+{
+	float m[4][4];
+};
+
 namespace DroneFields
 {
 	// The player character
@@ -81,6 +88,18 @@ namespace DroneFields
 	inline const PluginFieldCandidate kComponentToWorldRows[] = {
 		{ 127004, 0x1F0, static_cast<uint32_t>(sizeof(SDK::FTransform)), 0, nullptr },
 		{ 128786, 0x1F0, static_cast<uint32_t>(sizeof(SDK::FTransform)), 0, nullptr },
+	};
+
+	// The map area's pan and zoom matrix. It is native (the Game-SDK has no
+	// member for it), so it carries this plugin's own row for each game build it
+	// supports (+0x500 on all three, measured from the PDBs); the loader's own
+	// row for the running build wins when it has one.
+	inline auto MapAreaMatrix = PluginField<MapAreaMatrixData>{ { "UCrUW_MapMenuMapArea::MapAreaMatrix",
+		"UCrUW_MapMenuMapArea", "MapAreaMatrix", PLUGIN_FIELD_NATIVE, sizeof(MapAreaMatrixData), 0x500 } };
+	inline const PluginFieldCandidate kMapAreaMatrixRows[] = {
+		{ 127004, 0x500, static_cast<uint32_t>(sizeof(MapAreaMatrixData)), 0, nullptr },
+		{ 128786, 0x500, static_cast<uint32_t>(sizeof(MapAreaMatrixData)), 0, nullptr },
+		{ 129402, 0x500, static_cast<uint32_t>(sizeof(MapAreaMatrixData)), 0, nullptr },
 	};
 
 	// Drone settings and the map's fog of war
@@ -195,6 +214,8 @@ namespace DroneFields
 	{
 		const bool toWorld = PluginMap::ResolveField(scanner, self, ComponentToWorld, kComponentToWorldRows,
 			static_cast<uint32_t>(sizeof(kComponentToWorldRows) / sizeof(kComponentToWorldRows[0])));
+		const bool mapMatrix = PluginMap::ResolveField(scanner, self, MapAreaMatrix, kMapAreaMatrixRows,
+			static_cast<uint32_t>(sizeof(kMapAreaMatrixRows) / sizeof(kMapAreaMatrixRows[0])));
 		return PluginMap::ResolveFields(scanner, self,
 			BuildingDrone, Status, DroneCamera, DroneCameraColl, IsDead, GemAttributes, MiningComponent,
 			WeaponSystem, WeaponAttributes, AbilitySystem,
@@ -215,7 +236,7 @@ namespace DroneFields
 			HudPlayerCharacter, HudDistanceT, HudDistanceH, HudDistanceD, HudDistanceU, HudDistanceM,
 			HudHeightT, HudHeightH, HudHeightD, HudHeightU, HudHeightM,
 			NativeInputActionSize, InventorySlotSize, WeakSpotSize, MarkerItemSize, MarkerRepresentationSize,
-			VeinDataSize) && toWorld;
+			VeinDataSize) && toWorld && mapMatrix;
 	}
 
 	// The map keys of the game functions BetterDrone resolves, so the resolves
@@ -237,6 +258,7 @@ namespace DroneFields
 		inline constexpr const char* HandleDeactivate   = "UCrUW_ActivatableWidget::HandleDeactivate";
 		inline constexpr const char* CanDroneBeActive   = "ACrCharacterPlayerBase::CanBuildingDroneBeActive";
 		inline constexpr const char* CheckIfInInterior  = "ACrCharacterPlayerBase::CheckIfInInterior";
+		inline constexpr const char* MapCenterOnLocation = "UCrUW_MapMenuMapArea::CenterOnLocation";
 	}
 
 	// The parts of BetterDrone that can be off while the rest runs. Each lists
@@ -267,6 +289,10 @@ namespace DroneFields
 			PluginMap::KeysOf(MapDataHelper, BuildingsMarkers, BuildingsMarkerData, MarkerBuildingHandle, MarkerLocation,
 				MapMenuMapArea, MapMassMarkers, MapTerrain, MapCanvasPanel, MarkerWidget, MapPivotPoint,
 				MarkerColorData, MarkerPlayerColour, MarkerItemSize, MarkerRepresentationSize),
+			{} };
+
+		inline PluginMap::Feature MapFollow{ "map-follow", "Map follows the drone",
+			PluginMap::KeysOf(Keys::MapCenterOnLocation, MapAreaMatrix, MapMenuMapArea),
 			{} };
 
 		inline PluginMap::Feature Limits{ "drone-limits", "Drone speed, boost, size and limits",
@@ -327,7 +353,7 @@ namespace DroneFields
 		// Declares them all. Call first in OnPluginLoadHooks.
 		inline bool Declare(IPluginSelf* self, IPluginHookScanner* scanner)
 		{
-			return PluginMap::DeclareFeatures(scanner, self, MiningLaser, MapReveal, MapMarker, Limits, SprintKey,
+			return PluginMap::DeclareFeatures(scanner, self, MiningLaser, MapReveal, MapMarker, MapFollow, Limits, SprintKey,
 				Announcer,
 				AlwaysAllow, WaveShelter, Interaction, HoldTakeAll, MapOpen, BuildMenu, Speedometer, SpeedometerHeight, Audio);
 		}

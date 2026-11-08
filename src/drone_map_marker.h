@@ -10,15 +10,27 @@
 // has put on the same map, and publishes plain numbers. The render callback
 // only draws from those numbers.
 //
-// The same tick keeps the map centred on the drone until the player pans it.
+// Following is a part of its own: while the map is open in drone mode it is
+// kept centred on the drone until the player pans it by hand.
 
 struct IPluginSelf;
+struct IPluginHookScanner;
 
 void InitDroneMapMarker(IPluginSelf* self);
 void ShutdownDroneMapMarker(IPluginSelf* self);
 
 // Game thread only, every engine tick.
 void TickDroneMapMarker(float deltaSeconds);
+
+// Resolves the game's CenterOnLocation for the follow. Call in OnPluginLoadHooks.
+void ResolveDroneMapFollow(IPluginSelf* self, IPluginHookScanner* scanner);
+
+// Game thread only, every engine tick.
+void TickDroneMapFollow();
+
+// Puts the map back where the game had it, if it can be touched from this
+// thread. Call from PluginShutdown.
+void ShutdownDroneMapFollow();
 
 // The colour of the local player's arrow on the map, as an ImGui colour, or
 // the arrow's usual cyan while the game's colour asset is not loaded. Game
