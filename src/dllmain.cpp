@@ -6,6 +6,7 @@
 #include "drone_audio.h"
 #include "drone_body_anchor.h"
 #include "drone_floor_guard.h"
+#include "drone_hotbar.h"
 #include "drone_laser.h"
 #include "drone_map_marker.h"
 #include "drone_speedometer.h"
@@ -184,6 +185,7 @@ extern "C" __declspec(dllexport) void OnPluginLoadHooks(IPluginSelf* self, IPlug
     ResolveDroneFog(self, scanner);
     ResolveDroneBuildMenu(self, scanner);
     ResolveDroneLaser(self, scanner);
+    ResolveDroneHotbar(self, scanner);
     DroneFields::Resolve(self, scanner);
 }
 

@@ -102,6 +102,7 @@
     <ClCompile Include="drone_config.cpp" />
     <ClCompile Include="drone_floor_guard.cpp" />
     <ClCompile Include="drone_held_key.cpp" />
+    <ClCompile Include="drone_hotbar.cpp" />
     <ClCompile Include="drone_interact.cpp" />
     <ClCompile Include="drone_key_vk.cpp" />
     <ClCompile Include="drone_settings.cpp" />
@@ -133,6 +134,7 @@
     <ClInclude Include="drone_body_anchor.h" />
     <ClInclude Include="drone_floor_guard.h" />
     <ClInclude Include="drone_held_key.h" />
+    <ClInclude Include="drone_hotbar.h" />
     <ClInclude Include="drone_interact.h" />
     <ClInclude Include="drone_key_vk.h" />
     <ClInclude Include="drone_settings.h" />

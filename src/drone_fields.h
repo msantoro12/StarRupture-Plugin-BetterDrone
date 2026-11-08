@@ -247,6 +247,7 @@ namespace DroneFields
 		inline constexpr const char* MapMenu            = "ACrPlayerControllerBase::NativeOnInputMapMenu";
 		inline constexpr const char* UncoverFog         = "UCrMapManuSubsystem::UncoverFogOfWar";
 		inline constexpr const char* CancelTool         = "ACrCharacterPlayerBase::NativeOnWeaponCancelTool";
+		inline constexpr const char* CycleWeapon        = "ACrCharacterPlayerBase::NativeOnCycleWeapon";
 		inline constexpr const char* HandleDeactivate   = "UCrUW_ActivatableWidget::HandleDeactivate";
 		inline constexpr const char* CanDroneBeActive   = "ACrCharacterPlayerBase::CanBuildingDroneBeActive";
 		inline constexpr const char* CheckIfInInterior  = "ACrCharacterPlayerBase::CheckIfInInterior";
@@ -317,6 +318,13 @@ namespace DroneFields
 				NativeInputActions, NativeInputAction, NativeInputHandler, NativeInputActionSize),
 			{} };
 
+		// Ctrl and the mouse wheel change the hotbar in the drone, through the
+		// game's own weapon-cycle call. A part of its own: a game build without
+		// the key loses only this.
+		inline PluginMap::Feature HotbarCycle{ "hotbar-cycle", "Ctrl + mouse wheel changes the hotbar in the drone",
+			PluginMap::KeysOf(Keys::CycleWeapon),
+			{} };
+
 		inline PluginMap::Feature MapOpen{ "drone-map", "Open the map from the drone",
 			PluginMap::KeysOf(Keys::MapMenu),
 			{ "Interaction.Map In Drone Mode", "Interaction.Map Key" } };
@@ -347,7 +355,7 @@ namespace DroneFields
 		{
 			return PluginMap::DeclareFeatures(scanner, self, MiningLaser, MapReveal, MapMarker, MapFollow, Limits, SprintKey,
 				Announcer,
-				AlwaysAllow, WaveShelter, Interaction, HoldTakeAll, MapOpen, BuildMenu, Speedometer, SpeedometerHeight, Audio);
+				AlwaysAllow, WaveShelter, Interaction, HoldTakeAll, HotbarCycle, MapOpen, BuildMenu, Speedometer, SpeedometerHeight, Audio);
 		}
 	}
 
