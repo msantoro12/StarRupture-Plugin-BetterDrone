@@ -873,6 +873,8 @@ namespace
                 // Point the saved dropdown at it, as picking it there would.
                 if (target.saved)
                     snprintf(s_speedPresetRow.selected, sizeof(s_speedPresetRow.selected), "%s", target.name);
+                else
+                    s_speedPresetRow.ClearSelection();
             }
         }
 
@@ -1010,6 +1012,8 @@ void RenderDronePanel(IModLoaderImGui* ui)
         if (ui->SmallButton(preset.label))
         {
             PanelSettings::ApplySpeedPreset(preset);
+            std::lock_guard<std::mutex> lock(s_savedPresetsMutex);
+            s_speedPresetRow.ClearSelection();
         }
         if (ui->IsItemHovered())
         {
@@ -1140,6 +1144,8 @@ void RenderDronePanel(IModLoaderImGui* ui)
         if (ui->SmallButton(preset.label))
         {
             PanelSettings::ApplyRangePreset(preset);
+            std::lock_guard<std::mutex> lock(s_savedPresetsMutex);
+            s_rangePresetRow.ClearSelection();
         }
         if (ui->IsItemHovered())
         {
