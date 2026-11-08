@@ -3,9 +3,9 @@
 #include "drone_audio.h"
 #include "drone_body_anchor.h"
 #include "drone_floor_guard.h"
+#include "drone_held_key.h"
 #include "drone_interact.h"
 #include "drone_sprint_key.h"
-#include "drone_key_vk.h"
 #include "plugin_helpers.h"
 #include "object_ref.h"
 #include "drone_fields.h"
@@ -23,23 +23,22 @@ DroneSettings g_drone;
 
 namespace
 {
-    // Written by the keybind callback, acted on in OnDroneTick.
-    std::atomic<bool> g_boostKeyHeld{ false };
+    std::atomic<bool> g_lastKnownInDrone{ false };
 
-    // The custom key's VK (KeyNameToVk), or, whenever Boost Key is
-    // DroneConfig::kBoostKeyFollowsSprint, the resolved Sprint key's VK.
-    // OnDroneTick polls this as a fallback alongside the loader's own
-    // dispatch -- needed outright for a bare modifier, which the loader
-    // never dispatches to keybinds, and for Sprint mode, which registers
-    // no keybind with the loader at all.
-    std::atomic<int> g_boostKeyVk{ 0 };
+    // Written by the keybind callbacks, acted on in OnDroneTick. A HeldKey's
+    // VK is the custom key's (KeyNameToVk) or, whenever Boost Key is
+    // DroneConfig::kBoostKeyFollowsSprint, the resolved Sprint key's. The
+    // tick polls it as a fallback alongside the loader's own dispatch --
+    // needed outright for a bare modifier, which the loader never dispatches
+    // to keybinds, and for Sprint mode, which registers no keybind with the
+    // loader at all.
+    HeldKey g_boost{ "boost", g_lastKnownInDrone };
+    HeldKey g_slow{ "slow", g_lastKnownInDrone };
 
     // True when Boost Key is DroneConfig::kBoostKeyFollowsSprint and boost is
     // following the resolved Sprint key instead of a registered custom
     // keybind.
     std::atomic<bool> g_boostFollowsSprint{ false };
-
-    std::atomic<bool> g_lastKnownInDrone{ false };
 
     float g_currentEffectiveSpeed = 0.0f;
 
@@ -47,12 +46,6 @@ namespace
     // can be told apart from the boost multiplier moving the target. -1
     // guarantees the first tick after load counts as a change.
     float g_lastBaseSpeed = -1.0f;
-
-    // The two names actually registered: Pressed on the full combo, Released
-    // on its bare base key (see RegisterBoostKeyName). Kept separately so
-    // Unregister always matches what was registered.
-    char g_registeredBoostKeyPressed[64]  = {};
-    char g_registeredBoostKeyReleased[64] = {};
 
     IPluginSelf* s_sessionSelf = nullptr;
     bool g_inGameSession = false;
@@ -63,22 +56,15 @@ namespace
     // request on the tick; starts at the stock radius.
     float g_droneSizeCm = 0.0f;
     bool g_boostWasActive = false;
+    bool g_slowWasActive = false;
+
+    // The Slow key has been compared with the game's drone Up and Down keys
+    // since it was last bound. Cleared by a (re)bind, set on the game thread.
+    std::atomic<bool> g_slowClashChecked{ false };
     bool g_loggedInstanceReport = false;
 
-    void OnBoostKeyPressed(EModKey, EModKeyEvent event)
-    {
-        const bool held = (event == EModKeyEvent::Pressed);
-        g_boostKeyHeld.store(held, std::memory_order_relaxed);
-
-        if (g_lastKnownInDrone.load(std::memory_order_relaxed))
-        {
-            LOG_INFO("OnBoostKeyPressed: boost key %s (in drone: yes)", held ? "pressed" : "released");
-        }
-        else
-        {
-            LOG_DEBUG("OnBoostKeyPressed: boost key %s (in drone: no)", held ? "pressed" : "released");
-        }
-    }
+    void OnBoostKeyEvent(EModKey, EModKeyEvent event) { g_boost.OnEvent(event); }
+    void OnSlowKeyEvent(EModKey, EModKeyEvent event)  { g_slow.OnEvent(event); }
 
     // The Sprint lookup's state: written on the game thread only (a lookup
     // reads the world, so it is never made from the init or render thread).
@@ -98,21 +84,16 @@ namespace
         if (!result.followed && !result.fellBack)
             return;
 
-        g_boostKeyVk.store(g_sprintKey.vk, std::memory_order_relaxed);
+        g_boost.SetVk(g_sprintKey.vk);
         if (result.followed)
             LOG_INFO("boost key: following Sprint (%s)", keyName);
         else if (result.firstFallback)
             LOG_WARN("boost key: could not resolve the game's Sprint key (%s), using LeftShift", result.why);
     }
 
-    // A named combo's Released only fires on an exact modifier match
-    // (DispatchCombo), so "Shift+K" never sees a Released if the player
-    // lets go of Shift before K -- the key would read stuck held. The bare
-    // base key has no modifier requirement and always fires on release.
-    //
     // keyName == kBoostKeyFollowsSprint is not a real key: nothing is
     // registered with the loader for it, and OnDroneTick's poll of
-    // g_boostKeyVk (kept fed by ResolveAndCacheSprintKey) stands in for
+    // g_boost's VK (kept fed by ResolveAndCacheSprintKey) stands in for
     // dispatch instead.
     void RegisterBoostKeyName(IPluginSelf* self, const char* keyName)
     {
@@ -122,22 +103,40 @@ namespace
         if (strcmp(keyName, DroneConfig::kBoostKeyFollowsSprint) == 0)
         {
             g_boostFollowsSprint.store(true, std::memory_order_relaxed);
-            g_boostKeyVk.store(0, std::memory_order_relaxed);
+            g_boost.SetVk(0);
             g_sprintKey.Restart();
             return;
         }
 
         g_boostFollowsSprint.store(false, std::memory_order_relaxed);
+        g_boost.Register(self, keyName, OnBoostKeyEvent);
+    }
 
-        char baseKey[64] = {};
-        ExtractBaseKey(keyName, baseKey, sizeof(baseKey));
+    // Slow is a held key like the game's own drone Up and Down, so a Slow key
+    // that is also one of them would drop or climb the drone while slowing
+    // it. Warns once per binding. The lookup needs the game's input, which
+    // exists by the time the player is in the drone; until a key is found
+    // the check is tried again on the next launch.
+    void CheckSlowKeyClash()
+    {
+        if (g_slowClashChecked.load(std::memory_order_relaxed) || !DroneFields::Features::SprintKey.On())
+            return;
 
-        self->hooks->Input->RegisterKeybindByName(keyName, EModKeyEvent::Pressed, OnBoostKeyPressed);
-        self->hooks->Input->RegisterKeybindByName(baseKey, EModKeyEvent::Released, OnBoostKeyPressed);
-        snprintf(g_registeredBoostKeyPressed, sizeof(g_registeredBoostKeyPressed), "%s", keyName);
-        snprintf(g_registeredBoostKeyReleased, sizeof(g_registeredBoostKeyReleased), "%s", baseKey);
-        UpdateBoostKeyCache(keyName);
-        LOG_INFO("boost key: custom (%s)", keyName);
+        const int slowVk = g_slow.Vk();
+        if (slowVk == 0)
+            return;
+
+        char upName[64] = {}, downName[64] = {};
+        const int upVk   = ResolveInputHandlerVk(SDK::UCrInputNativeDroneMoveUp::StaticClass(), upName, sizeof(upName));
+        const int downVk = ResolveInputHandlerVk(SDK::UCrInputNativeDroneMoveDown::StaticClass(), downName, sizeof(downName));
+        if (upVk == 0 && downVk == 0)
+            return;
+
+        g_slowClashChecked.store(true, std::memory_order_relaxed);
+        if (slowVk == upVk || slowVk == downVk)
+            LOG_WARN("slow key: %s is also the game's drone %s key, so slowing down will also move the drone; "
+                     "pick another Slow Key on the loader's Config page",
+                     slowVk == upVk ? upName : downName, slowVk == upVk ? "Up" : "Down");
     }
 
     void OnWorldBeginPlay(SDK::UWorld*)
@@ -573,11 +572,6 @@ void RequestSphereRadius(float radiusCm)
     g_pendingSphere.Request(radiusCm);
 }
 
-void UpdateBoostKeyCache(const char* keyName)
-{
-    g_boostKeyVk.store(KeyNameToVk(keyName), std::memory_order_relaxed);
-}
-
 void OnDroneTick(float deltaSeconds)
 {
     if (!g_drone.valid || !g_drone.speedPerSec)
@@ -611,6 +605,7 @@ void OnDroneTick(float deltaSeconds)
     if (justEnteredDrone)
     {
         needsInstanceUpdate = true;
+        CheckSlowKeyClash();
 
         // Picks up an in-game rebind of Sprint made mid-session.
         if (g_boostFollowsSprint.load(std::memory_order_relaxed))
@@ -639,35 +634,43 @@ void OnDroneTick(float deltaSeconds)
         }
     }
 
-    bool held = g_boostKeyHeld.load(std::memory_order_relaxed);
-    if (!held && inDrone)
-    {
-        const int vk = g_boostKeyVk.load(std::memory_order_relaxed);
-        held = vk != 0 && (GetAsyncKeyState(vk) & 0x8000) != 0 && GameHasFocus();
-    }
-
-    const bool boostActive = held && inDrone;
+    const bool boostActive = g_boost.Held(inDrone) && inDrone;
+    const bool slowActive  = g_slow.Held(inDrone) && inDrone;
 
     const float baseSpeed = DroneConfig::Config::ReadSpeedPerSec();
     const bool baseSpeedChanged = std::fabs(baseSpeed - g_lastBaseSpeed) > 0.01f;
     g_lastBaseSpeed = baseSpeed;
 
-    float targetSpeed = boostActive ? baseSpeed * DroneConfig::Config::ReadBoostMultiplier() : baseSpeed;
+    // Slow wins over Boost: with both held the drone flies at base x slow.
+    float targetSpeed = baseSpeed;
+    if (slowActive)
+        targetSpeed = baseSpeed * DroneConfig::Config::ReadSlowMultiplier();
+    else if (boostActive)
+        targetSpeed = baseSpeed * DroneConfig::Config::ReadBoostMultiplier();
     if (targetSpeed > DroneConfig::Config::MaxSpeedPerSec())
         targetSpeed = DroneConfig::Config::MaxSpeedPerSec();
 
     if (boostActive != g_boostWasActive)
     {
         g_boostWasActive = boostActive;
+        const float boostSpeed = std::fmin(baseSpeed * DroneConfig::Config::ReadBoostMultiplier(),
+                                           DroneConfig::Config::MaxSpeedPerSec());
         LOG_INFO("OnDroneTick: boost %s, target=%.0f cm/s",
-            boostActive ? "engaged" : "disengaged", targetSpeed);
+            boostActive ? "engaged" : "disengaged", boostSpeed);
+    }
+
+    if (slowActive != g_slowWasActive)
+    {
+        g_slowWasActive = slowActive;
+        LOG_INFO("OnDroneTick: slow %s, target=%.0f cm/s",
+            slowActive ? "engaged" : "disengaged", targetSpeed);
     }
 
     // Acceleration/Deceleration are clamped to a floor above 0 (DroneConfig,
-    // kMinAccelDecel) and still govern the boost engage/disengage edge. A
-    // base-speed change (slider, preset, config load, entering the drone)
-    // snaps straight to target instead -- the ramp is only meant to smooth
-    // boost, not gate every speed change.
+    // kMinAccelDecel) and still govern the boost and slow engage/disengage
+    // edges. A base-speed change (slider, preset, config load, entering the
+    // drone) snaps straight to target instead -- the ramp is only meant to
+    // smooth boost and slow, not gate every speed change.
     const float accel = DroneConfig::Config::ReadAcceleration();
     const float decel = DroneConfig::Config::ReadDeceleration();
 
@@ -713,20 +716,34 @@ void RegisterBoostKey(IPluginSelf* self)
 
 void UnregisterBoostKey(IPluginSelf* self)
 {
-    if (!self || !self->hooks->Input)
-        return;
-
-    if (g_registeredBoostKeyPressed[0] != '\0')
-        self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKeyPressed, EModKeyEvent::Pressed, OnBoostKeyPressed);
-    if (g_registeredBoostKeyReleased[0] != '\0')
-        self->hooks->Input->UnregisterKeybindByName(g_registeredBoostKeyReleased, EModKeyEvent::Released, OnBoostKeyPressed);
-
-    g_registeredBoostKeyPressed[0]  = '\0';
-    g_registeredBoostKeyReleased[0] = '\0';
+    g_boost.Unregister(self);
 }
 
 void RebindBoostKey(IPluginSelf* self, const char* newKeyName)
 {
     UnregisterBoostKey(self);
     RegisterBoostKeyName(self, newKeyName);
+}
+
+void RegisterSlowKey(IPluginSelf* self)
+{
+    if (!self || !self->hooks->Input)
+        return;
+
+    char keyName[64] = {};
+    DroneConfig::Config::ReadSlowKey(keyName, sizeof(keyName));
+    g_slow.Register(self, keyName, OnSlowKeyEvent);
+    g_slowClashChecked.store(false, std::memory_order_relaxed);
+}
+
+void UnregisterSlowKey(IPluginSelf* self)
+{
+    g_slow.Unregister(self);
+}
+
+void RebindSlowKey(IPluginSelf* self, const char* newKeyName)
+{
+    UnregisterSlowKey(self);
+    g_slow.Register(self, newKeyName, OnSlowKeyEvent);
+    g_slowClashChecked.store(false, std::memory_order_relaxed);
 }

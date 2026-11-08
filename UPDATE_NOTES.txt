@@ -6,3 +6,4 @@
 - Boost follows your Sprint key as soon as the game has it
 - Reload in the drone vents the mining laser's heat, like the mining tool's R
 - New option Keep Area Around Body Loaded: the world around your parked character stays loaded while the drone is out (on by default)
+- Hold Ctrl (rebindable) in the drone to fly slower, by the new Slow Multiplier row; it wins over Boost
