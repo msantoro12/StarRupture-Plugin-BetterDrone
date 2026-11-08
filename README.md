@@ -60,7 +60,7 @@ Hold the game's context interact key (**E** by default, rebinds included) on a b
 ### The map from the drone <sup>[✦](#msantoro12)</sup>
 
 - **Open it:** the map key (**M**; rebindable on the loader's Config page, Interaction) opens the map while you fly and closes it again, never over another menu.
-- **Follow:** the map opens centred on the drone and keeps it centred as you fly; zoom works as usual. Pan the map by hand (mouse drag, arrow keys or gamepad) and it stops following until you reopen it. When the drone is recalled the map goes back to centring on your character. No setting.
+- **Follow:** the map opens centred on the drone and keeps it centred as you fly; zoom works as usual. Pan the map by hand (mouse drag, arrow keys, gamepad or the Center on player button) and it stops following until you reopen it. When the drone is recalled the map goes back to centring on your character, unless you moved it. No setting.
 - **Marker:** the drone gets its own, a small targeting reticle in your player-arrow colour (cyan if unreadable) that turns with the drone and keeps its size at any zoom. The game's arrow stays at your parked body. No setting. It hides if the map can't be matched to the game's markers, and stays off until RELOAD after a fault.
 - **Reveal:** `Drone Reveals Map` (off by default) uncovers the map as you fly, at the walking radius and spacing, upgrades included. Saved with your game. Not inside the Forgotten Engine.
 

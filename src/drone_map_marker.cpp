@@ -10,9 +10,7 @@
 #include <ChimeraUI_classes.hpp>
 #include <Engine_classes.hpp>
 #include <UMG_classes.hpp>
-#include <atomic>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <windows.h>
@@ -366,8 +364,7 @@ namespace
     // position written to the terrain from outside is overwritten the next
     // frame. Each tick this asks the map area to centre on the drone's world
     // location instead, the call behind the game's own "Center on player". It
-    // is absolute against the matrix, so repeating it cannot overshoot, and the
-    // game keeps the pan inside the map's edges.
+    // is absolute against the matrix, so repeating it cannot overshoot.
     //
     // The matrix is read back after each call. At the start of the next tick it
     // should still be where that call left it; a different pan means the player
@@ -392,14 +389,16 @@ namespace
         "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 40 48 83 79 30 00 48 8B F2 0F 29 74 24 30 48 8B F9 74 ?? "
         "E8 ?? ?? ?? ?? 48 8B D0 48 8D 4F 30 E8 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 4F 30 48 85 C9 74 ?? 48 8D 54 24 20";
 
-    // A pan under this (widget units) is the float noise of the matrix, not a hand.
+    // A pan under this (widget units), summed over the ticks since the last zoom,
+    // is the float noise of the matrix, not a hand.
     constexpr float kPanTolerance   = 0.25f;
     constexpr float kScaleTolerance = 1e-4f;
 
-    // For this many ticks after follow starts, a pan the game made itself while
-    // opening the map (centring on the player, restoring a saved pan) is followed
-    // from where it is instead of ending follow.
-    constexpr int kSettleTicks = 15;
+    // For this long after follow starts, a pan the game made itself while opening
+    // the map (centring on the player, restoring a saved pan) is followed from
+    // where it is instead of ending follow. Time, not ticks: the frame rate
+    // decides how many ticks the game's opening takes.
+    constexpr uint64_t kSettleMs = 500;
 
     struct Follow
     {
@@ -408,7 +407,8 @@ namespace
         bool  haveBase;    // scale, tx and ty hold the matrix as the last call left it
         float scale;
         float tx, ty;
-        int   ticks;       // ticks since follow started, up to kSettleTicks
+        float driftX, driftY;   // pan since the last call, summed over the ticks
+        uint64_t startMs;       // GetTickCount64 at the first call; 0 before it
     };
 
     Follow                                g_follow = {};
@@ -459,6 +459,15 @@ namespace
         {
             return false;
         }
+    }
+
+    // True once the map area has its size, so the call to centre on a location
+    // has a half size to work from.
+    bool AreaLaidOut(SDK::UCrUW_MapMenuMapArea* area)
+    {
+        SDK::UWidget* canvas = DroneFields::ValueOr(DroneFields::MapCanvasPanel, area);
+        Geo geo;
+        return canvas && SampleGeo(canvas, LocalPlayerController(), &geo) && LaidOut(geo);
     }
 
     // Drops the state, touching no game object.
@@ -524,21 +533,38 @@ namespace
         if (!ReadDrone(LocalPlayerController(), &drone))
             return;
 
+        // Until the first call lands, a map that is not set up yet is waited for.
+        // Once it has, a matrix that cannot be read ends follow.
         MatrixRead now;
-        if (!ReadMatrix(area, &now))
+        const bool readable = ReadMatrix(area, &now);
+        if (!f.haveBase && !(readable && AreaLaidOut(area)))
+            return;
+
+        if (!readable)
         {
             StopFollow("the map's pan and zoom could not be read");
             return;
         }
 
+        const uint64_t nowMs = GetTickCount64();
         if (f.haveBase)
         {
-            const bool zoomed = std::fabs(now.scale - f.scale) > kScaleTolerance;
-            const bool panned = std::fabs(now.tx - f.tx) > kPanTolerance || std::fabs(now.ty - f.ty) > kPanTolerance;
-            if (panned && !zoomed && f.ticks >= kSettleTicks)
+            const bool zoomed  = std::fabs(now.scale - f.scale) > kScaleTolerance;
+            const bool settled = nowMs - f.startMs >= kSettleMs;
+            if (zoomed || !settled)
             {
-                StopFollow("the map was moved by hand");
-                return;
+                f.driftX = 0.0f;
+                f.driftY = 0.0f;
+            }
+            else
+            {
+                f.driftX += now.tx - f.tx;
+                f.driftY += now.ty - f.ty;
+                if (std::fabs(f.driftX) > kPanTolerance || std::fabs(f.driftY) > kPanTolerance)
+                {
+                    StopFollow("the map was moved by hand");
+                    return;
+                }
             }
         }
 
@@ -555,13 +581,14 @@ namespace
         if (!f.centred)
             LOG_DEBUG("DroneMapFollow: following the drone on the map");
 
+        if (!f.haveBase)
+            f.startMs = nowMs;
+
         f.centred  = true;
         f.haveBase = true;
         f.scale    = after.scale;
         f.tx       = after.tx;
         f.ty       = after.ty;
-        if (f.ticks < kSettleTicks)
-            ++f.ticks;
     }
 
     // Apart from FollowImpl: a function with __try may not hold objects that need
@@ -571,6 +598,21 @@ namespace
         __try
         {
             FollowImpl();
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    // Apart from EndFollow, for the same reason: shutdown calls it outside
+    // RunFollowGuarded.
+    bool EndFollowGuarded()
+    {
+        __try
+        {
+            EndFollow();
             return true;
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
@@ -718,9 +760,16 @@ void ResolveDroneMapFollow(IPluginSelf* self, IPluginHookScanner* scanner)
 void ShutdownDroneMapFollow()
 {
     // Game objects are touched only on the game thread, which is where shutdown
-    // runs on loader 1.22 and later; anywhere else the map is left as it is.
+    // runs when it comes from RELOAD; anywhere else the map is left as it is.
     if (OnGameThread() && !g_followFailed)
-        EndFollow();
+    {
+        if (!EndFollowGuarded())
+        {
+            g_followFailed = true;
+            ForgetFollow();
+            LOG_ERROR("DroneMapFollow: access violation while putting the map back at shutdown");
+        }
+    }
     else
         ForgetFollow();
 }

@@ -285,7 +285,7 @@ namespace DroneFields
 			{} };
 
 		inline PluginMap::Feature MapFollow{ "map-follow", "Map follows the drone",
-			PluginMap::KeysOf(Keys::MapCenterOnLocation, MapAreaMatrix, MapMenuMapArea),
+			PluginMap::KeysOf(Keys::MapCenterOnLocation, MapAreaMatrix, MapMenuMapArea, MapCanvasPanel),
 			{} };
 
 		inline PluginMap::Feature Limits{ "drone-limits", "Drone speed, boost, size and limits",
@@ -359,8 +359,8 @@ namespace DroneFields
 		}
 	}
 
-	// A game function by its map key, with this plugin's own pattern as the
-	// fallback. Every address BetterDrone resolves is a function entry, so each
+	// A game function by its map key. The pattern is mapping input only; the
+	// loader resolves from its row for the running build. Every address BetterDrone resolves is a function entry, so each
 	// request declares PLUGIN_SCAN_FUNCTION_START: some get a detour written
 	// over them and the rest are called directly. The loader then checks the
 	// match against the executable's exception directory instead of trusting
