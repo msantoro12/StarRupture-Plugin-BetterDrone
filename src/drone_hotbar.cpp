@@ -1,8 +1,12 @@
 #include "drone_hotbar.h"
 #include "drone_fields.h"
+#include "drone_interact.h"
 #include "plugin_helpers.h"
 #include <Chimera_classes.hpp>
+#include <Engine_classes.hpp>
+#include <atomic>
 #include <cstdint>
+#include <cstdlib>
 
 namespace
 {
@@ -26,6 +30,85 @@ namespace
         "48 63 40 38 3B 42 38 7F ?? 48 8B C8 48 8B 42 30 4C 39 04 C8 75 ?? 33 D2 48 8B CB "
         "E8 ?? ?? ?? ??";
     constexpr int32_t kCycleWeaponCallAt = 53;
+
+    // The directions the game's inputs pass to the cycle.
+    constexpr uint8_t kCycleNext     = 0;
+    constexpr uint8_t kCyclePrevious = 1;
+
+    // One wheel notch, as the message reports it (WHEEL_DELTA).
+    constexpr int32_t kRawPerNotch = 120;
+
+    // Wheel forward (away from the user) is the previous slot and wheel back
+    // the next, the order most PC games use. The game's own binding is not read.
+    constexpr uint8_t kForwardCycle = kCyclePrevious;
+    constexpr uint8_t kBackCycle    = kCycleNext;
+
+    // The wheel callback runs on the window's message thread and the call has to
+    // happen on the game thread, so the callback only queues the delta and
+    // OnTick makes the calls. g_inDrone is the tick's last answer, so the
+    // callback can pass a notch on when the drone is not out without touching
+    // the game's objects.
+    std::atomic<bool>    g_inDrone{ false };
+    std::atomic<int32_t> g_pendingRawDelta{ 0 };
+
+    // Less than a notch left over, from a wheel that reports small steps.
+    // Tick only.
+    int32_t g_rawRemainder = 0;
+
+    bool OnMouseWheel(const PluginMouseWheelEvent* event, void*)
+    {
+        if (!event || event->size < sizeof(PluginMouseWheelEvent))
+            return false;
+
+        // While a loader window has capture the game is not getting the wheel
+        // anyway. A horizontal wheel and a wheel without Ctrl are not ours, and
+        // a menu open on the game's layer owns the wheel.
+        if (event->uiCapturing || event->rawDelta == 0 || event->rawDeltaH != 0
+            || (event->modifiers & PluginWheelMod_Ctrl) == 0
+            || !g_inDrone.load(std::memory_order_relaxed) || IsGameMenuOpen())
+            return false;
+
+        // Consumed: neither the game nor a wheel handler registered after this
+        // one (the minimap zoom) also sees the notch.
+        g_pendingRawDelta.fetch_add(event->rawDelta, std::memory_order_relaxed);
+        return true;
+    }
+
+    void OnTick(float)
+    {
+        const bool inDrone = IsLocalPlayerInDrone();
+        g_inDrone.store(inDrone, std::memory_order_relaxed);
+
+        const int32_t raw = g_pendingRawDelta.exchange(0, std::memory_order_relaxed);
+        if (!inDrone)
+        {
+            g_rawRemainder = 0;
+            return;
+        }
+
+        g_rawRemainder += raw;
+        if (std::abs(g_rawRemainder) < kRawPerNotch)
+            return;
+
+        SDK::ACrPlayerControllerBase* pc = LocalPlayerController();
+        SDK::ACrCharacterPlayerBase* character = DroneFields::ValueOr(DroneFields::CrChar, pc);
+        if (!character || DroneFields::Dead(character) || pc->Pawn != static_cast<SDK::APawn*>(character))
+        {
+            g_rawRemainder = 0;
+            return;
+        }
+
+        while (std::abs(g_rawRemainder) >= kRawPerNotch)
+        {
+            const bool forward = g_rawRemainder > 0;
+            g_rawRemainder += forward ? -kRawPerNotch : kRawPerNotch;
+
+            const uint8_t direction = forward ? kForwardCycle : kBackCycle;
+            g_cycleWeapon(character, direction);
+            LOG_DEBUG("DroneHotbar: Ctrl + wheel %s, cycled to the %s slot",
+                      forward ? "forward" : "back", direction == kCycleNext ? "next" : "previous");
+        }
+    }
 }
 
 void ResolveDroneHotbar(IPluginSelf* self, IPluginHookScanner* scanner)
@@ -36,4 +119,34 @@ void ResolveDroneHotbar(IPluginSelf* self, IPluginHookScanner* scanner)
     g_cycleWeapon = PluginMap::FunctionAs<CycleWeapon_t>(scanner, self, DroneFields::Keys::CycleWeapon,
         kCycleWeaponPattern, PLUGIN_SCAN_FUNCTION_START,
         PLUGIN_SCAN_FLAG_OPTIONAL | PLUGIN_SCAN_FLAG_FOLLOW_REL32, 0, kCycleWeaponCallAt);
+}
+
+bool InitDroneHotbar(IPluginSelf* self)
+{
+    auto* input = self ? self->hooks->Input : nullptr;
+    if (!g_cycleWeapon || !input || !input->RegisterMouseWheel)
+    {
+        LOG_WARN("DroneHotbar: no weapon-cycle call or mouse wheel input -- Ctrl + wheel will not change the hotbar");
+        return false;
+    }
+
+    input->RegisterMouseWheel(&OnMouseWheel, nullptr);
+    self->hooks->Engine->RegisterOnTick(OnTick);
+
+    LOG_INFO("DroneHotbar: Ctrl + mouse wheel changes the hotbar in drone mode");
+    return true;
+}
+
+void ShutdownDroneHotbar(IPluginSelf* self)
+{
+    if (!self)
+        return;
+
+    if (self->hooks->Input && self->hooks->Input->UnregisterMouseWheel)
+        self->hooks->Input->UnregisterMouseWheel(&OnMouseWheel, nullptr);
+    self->hooks->Engine->UnregisterOnTick(OnTick);
+
+    g_inDrone.store(false, std::memory_order_relaxed);
+    g_pendingRawDelta.store(0, std::memory_order_relaxed);
+    g_rawRemainder = 0;
 }

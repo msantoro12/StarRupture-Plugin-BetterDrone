@@ -11,3 +11,4 @@
 - The system voice (rupture warnings and other spoken lines) stays audible while the drone is far from your body; with other players in the game it may still fade
 - Saving over a saved preset now asks "You're saving over <name>. Continue?" first
 - The map opens centred on the drone and follows it while you fly; pan it by hand to stop
+- Ctrl + mouse wheel changes your hotbar slot while the drone is out

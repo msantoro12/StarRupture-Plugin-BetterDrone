@@ -222,6 +222,8 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     InitWavePatch(DroneFields::Features::AlwaysAllow.On(), DroneFields::Features::WaveShelter.On());
     if (DroneFields::Features::Interaction.On())
         InitDroneInteract();
+    if (DroneFields::Features::HotbarCycle.On())
+        InitDroneHotbar(self);
     if (DroneFields::Features::MapOpen.On())
         InitDroneMap();
     if (DroneFields::Features::MapReveal.On())
@@ -257,6 +259,8 @@ extern "C" __declspec(dllexport) void PluginShutdown()
         ShutdownDroneLaser(g_self);
     if (DroneFields::Features::Interaction.On())
         ShutdownDroneInteract();
+    if (DroneFields::Features::HotbarCycle.On())
+        ShutdownDroneHotbar(g_self);
     if (DroneFields::Features::MapOpen.On())
         ShutdownDroneMap();
     if (DroneFields::Features::MapReveal.On())
