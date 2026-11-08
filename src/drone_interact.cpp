@@ -3,6 +3,7 @@
 #include "drone_fields.h"
 #include "drone_key_vk.h"
 #include "drone_sprint_key.h"
+#include "object_ref.h"
 #include "plugin_helpers.h"
 #include <plugin_interface.h>
 #include <Chimera_classes.hpp>
@@ -378,9 +379,10 @@ namespace
         return nullptr;
     }
 
-    // Set when the hold ran the context interaction on the current press, so
-    // the release that ends the same press does not also take the one item the
-    // plain interact would. Cleared by the next plain press. Game thread only.
+    // Set when the hold ran the context interaction on a logistics drone on the
+    // current press, so the release that ends the same press does not also take
+    // the one item the plain interact would. A hold on anything else leaves the
+    // release alone. Cleared by the next plain press. Game thread only.
     bool g_holdRan = false;
 
     // Mirrors UCrInputNativeInteract: press starts a held interaction, release
@@ -456,15 +458,31 @@ namespace
     bool        g_holdArmed   = false;   // pressed in the drone, not yet run
     uint64_t    g_holdDownMs  = 0;
     float       g_holdSeconds = 0.0f;
+    bool        g_holdTimeRead = false;  // g_holdSeconds came from the game's mapping
     bool        g_holdOn      = false;
+
+    // What the crosshair was on when the key went down. The hold runs on that
+    // and on nothing else.
+    ObjectRef<SDK::AActor> g_holdTarget;
+
+    // True while a loader or plugin window has the keyboard, so typing in it
+    // does not arm the hold.
+    bool OverlayOpen()
+    {
+        auto* ui = GetSelf()->hooks->UI;
+        return ui && ui->IsOverlayOpen && ui->IsOverlayOpen();
+    }
 
     // The hold time to wait for: the game's own Hold trigger on that action,
     // else Unreal's default for the trigger. Logged with where it came from.
+    // Once it has come from the game's mapping it does not change, so it is
+    // not looked up again.
     void ResolveHoldSeconds()
     {
         float seconds = 0.0f;
         const char* source = "the game's input mapping";
-        if (!ResolveInputHandlerHoldSeconds(SDK::UCrInputNativeInteractContext::StaticClass(), &seconds))
+        const bool game = ResolveInputHandlerHoldSeconds(SDK::UCrInputNativeInteractContext::StaticClass(), &seconds);
+        if (!game)
         {
             const SDK::UInputTriggerHold* defaults = SDK::UInputTriggerHold::GetDefaultObj();
             seconds = defaults ? defaults->HoldTimeThreshold : 0.0f;
@@ -478,14 +496,16 @@ namespace
 
         if (seconds != g_holdSeconds)
             LOG_INFO("DroneInteract: hold to take all after %.2f s, from %s", seconds, source);
-        g_holdSeconds = seconds;
+        g_holdSeconds  = seconds;
+        g_holdTimeRead = game;
     }
 
-    // Runs the context interaction on the current target: Started picks what
-    // the target offers and stores it on the controller, Context runs it, and
-    // Completed drops it again, all in this call so nothing stays stored past
-    // the tick. Game thread only (the tick).
-    void RunHold(SDK::ACrPlayerControllerBase* pc)
+    // Runs the context interaction on the target the key went down on, if the
+    // crosshair is still on it: Started picks what the target offers and stores
+    // it on the controller, Context runs it, and Completed drops it again, all
+    // in this call so nothing stays stored past the tick. Game thread only (the
+    // tick).
+    void RunHold(SDK::ACrPlayerControllerBase* pc, SDK::AActor* pressTarget)
     {
         SDK::ACrCharacterPlayerBase* character = nullptr;
         if (const char* gate = InteractGate(pc, character))
@@ -495,8 +515,11 @@ namespace
         }
 
         SDK::AActor* target = DroneFields::ValueOr(DroneFields::CurrentInteractableActor, pc);
-        if (!target)
+        if (!target || target != pressTarget)
+        {
+            LOG_DEBUG("DroneInteract: hold finished but nothing sent -- the target changed");
             return;
+        }
 
         std::optional<BodyAtDroneCamera> atDrone;
         if (SDK::UCameraComponent* camera = RangingCamera(pc, character))
@@ -504,20 +527,26 @@ namespace
 
         LOG_INFO("DroneInteract: hold to take all on %s%s", target->Class->GetName().c_str(),
                  atDrone.has_value() ? ", ranged from the drone" : "");
+        const bool onDrone = target->IsA(SDK::ACrDroneBase::StaticClass());
         g_contextStarted(pc);
         g_context(pc);
         g_contextCompleted(pc);
-        g_holdRan = true;
+        g_holdRan = onDrone;
     }
 
     // The context key goes down in the drone with no menu open, and stays down
     // for the hold time: run the context interaction once. The key is looked up
     // again on each entry to the drone, which picks up a rebind, and on the
-    // retry timer while it is not settled; E stands in, logged once. A short
-    // press never gets here, so it stays the plain interact.
+    // retry timer while it is not settled; E stands in, logged once. The lookup
+    // starts over when the drone ends: the context action is bound on foot, so
+    // that is where a rebind shows, and the drone keeps the key found there. A
+    // short press never gets here, so it stays the plain interact.
     void HoldTick(SDK::ACrPlayerControllerBase* pc)
     {
         const bool inDrone = PilotingCharacter(pc) != nullptr;
+        if (!inDrone && g_holdInDrone)
+            g_holdKey.Restart();
+
         if ((inDrone && !g_holdInDrone) || g_holdKey.Due())
         {
             char keyName[64] = {};
@@ -527,26 +556,30 @@ namespace
                 LOG_INFO("DroneInteract: hold to take all on the game's context interact key (%s)", keyName);
             else if (result.firstFallback)
                 LOG_WARN("DroneInteract: could not resolve the game's context interact key (%s), using E", result.why);
-            if (inDrone && !g_holdInDrone)
+            if (inDrone && !g_holdInDrone && !g_holdTimeRead)
                 ResolveHoldSeconds();
         }
         g_holdInDrone = inDrone;
 
-        const bool down    = g_holdKey.vk != 0 && (GetAsyncKeyState(g_holdKey.vk) & 0x8000) != 0 && GameHasFocus();
+        const bool down    = g_holdKey.vk != 0 && (GetAsyncKeyState(g_holdKey.vk) & 0x8000) != 0 && GameHasFocus() &&
+                             !OverlayOpen();
         const bool pressed = down && !g_holdDown;
         g_holdDown         = down;
 
         if (!down)
         {
             g_holdArmed = false;
+            g_holdTarget.Reset();
             return;
         }
 
         const uint64_t now = GetTickCount64();
         if (pressed)
         {
-            g_holdArmed  = inDrone && !IsGameMenuOpen();
+            SDK::AActor* target = inDrone ? DroneFields::ValueOr(DroneFields::CurrentInteractableActor, pc) : nullptr;
+            g_holdArmed  = target && !IsGameMenuOpen();
             g_holdDownMs = now;
+            g_holdTarget.Set(g_holdArmed ? target : nullptr);
         }
 
         if (!g_holdArmed || !inDrone || g_holdSeconds <= 0.0f ||
@@ -554,8 +587,10 @@ namespace
             return;
 
         g_holdArmed = false;
-        if (!IsGameMenuOpen())
-            RunHold(pc);
+        SDK::AActor* pressTarget = g_holdTarget.Get();
+        g_holdTarget.Reset();
+        if (pressTarget && !IsGameMenuOpen())
+            RunHold(pc, pressTarget);
     }
 
     void OnTick(float)
@@ -1063,8 +1098,7 @@ bool InitDroneInteract()
     // key above keeps working.
     g_holdOn = DroneFields::Features::HoldTakeAll.On() && g_contextStarted && g_context && g_contextCompleted;
     if (!g_holdOn)
-        LOG_INFO("DroneInteract: hold to take all is off -- the loader's map has no entry for the "
-                 "context interact functions on this build");
+        LOG_INFO("DroneInteract: hold to take all is off on this build");
 
     GetSelf()->hooks->Engine->RegisterOnTick(OnTick);
 
@@ -1165,6 +1199,8 @@ void ShutdownDroneInteract()
     g_holdArmed   = false;
     g_holdRan     = false;
     g_holdSeconds = 0.0f;
+    g_holdTimeRead = false;
+    g_holdTarget.Reset();
 
     LOG_DEBUG("DroneInteract: hooks removed");
 }
