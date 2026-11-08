@@ -91,16 +91,10 @@ namespace DroneFields
 	};
 
 	// The map area's pan and zoom matrix. It is native (the Game-SDK has no
-	// member for it), so it carries this plugin's own row for each game build it
-	// supports (+0x500 on all three, measured from the PDBs); the loader's own
-	// row for the running build wins when it has one.
+	// member for it), so it is the loader's row for the running build or the
+	// map-follow feature is off.
 	inline auto MapAreaMatrix = PluginField<MapAreaMatrixData>{ { "UCrUW_MapMenuMapArea::MapAreaMatrix",
 		"UCrUW_MapMenuMapArea", "MapAreaMatrix", PLUGIN_FIELD_NATIVE, sizeof(MapAreaMatrixData), 0x500 } };
-	inline const PluginFieldCandidate kMapAreaMatrixRows[] = {
-		{ 127004, 0x500, static_cast<uint32_t>(sizeof(MapAreaMatrixData)), 0, nullptr },
-		{ 128786, 0x500, static_cast<uint32_t>(sizeof(MapAreaMatrixData)), 0, nullptr },
-		{ 129402, 0x500, static_cast<uint32_t>(sizeof(MapAreaMatrixData)), 0, nullptr },
-	};
 
 	// Drone settings and the map's fog of war
 	inline auto SpeedPerSec   = DRONE_FIELD(UAuActorPlacementDeveloperSettings, BuildingDroneSpeedPerSec);
@@ -214,8 +208,6 @@ namespace DroneFields
 	{
 		const bool toWorld = PluginMap::ResolveField(scanner, self, ComponentToWorld, kComponentToWorldRows,
 			static_cast<uint32_t>(sizeof(kComponentToWorldRows) / sizeof(kComponentToWorldRows[0])));
-		const bool mapMatrix = PluginMap::ResolveField(scanner, self, MapAreaMatrix, kMapAreaMatrixRows,
-			static_cast<uint32_t>(sizeof(kMapAreaMatrixRows) / sizeof(kMapAreaMatrixRows[0])));
 		return PluginMap::ResolveFields(scanner, self,
 			BuildingDrone, Status, DroneCamera, DroneCameraColl, IsDead, GemAttributes, MiningComponent,
 			WeaponSystem, WeaponAttributes, AbilitySystem,
@@ -231,12 +223,12 @@ namespace DroneFields
 			OreWeakSpots, OreIsDepleted, OreCurrentCount, OreMaxCount, WeakSpotItems, WeakSpotHealth, WeakSpotCount,
 			WeakSpotResource, InventorySlots, SlotItemId, ItemIdHandle, OreMappingData, PhysMatOreDataMap,
 			MapDataHelper, BuildingsMarkers, BuildingsMarkerData, MarkerBuildingHandle, MarkerLocation,
-			MapMenuMapArea, MapMassMarkers, MapTerrain, MapCanvasPanel, MarkerWidget, MapPivotPoint,
+			MapMenuMapArea, MapMassMarkers, MapTerrain, MapCanvasPanel, MarkerWidget, MapPivotPoint, MapAreaMatrix,
 			MarkerColorData, MarkerPlayerColour,
 			HudPlayerCharacter, HudDistanceT, HudDistanceH, HudDistanceD, HudDistanceU, HudDistanceM,
 			HudHeightT, HudHeightH, HudHeightD, HudHeightU, HudHeightM,
 			NativeInputActionSize, InventorySlotSize, WeakSpotSize, MarkerItemSize, MarkerRepresentationSize,
-			VeinDataSize) && toWorld && mapMatrix;
+			VeinDataSize) && toWorld;
 	}
 
 	// The map keys of the game functions BetterDrone resolves, so the resolves

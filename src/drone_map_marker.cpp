@@ -384,8 +384,8 @@ namespace
 
     typedef void (__fastcall* CenterOnLocation_t)(SDK::UCrUW_MapMenuMapArea* area, MapPoint* location);
 
-    // Resolved during OnPluginLoadHooks; null when the map and this plugin's
-    // pattern both missed on this build, which turns the feature off.
+    // Resolved during OnPluginLoadHooks; null when the loader has no row for
+    // this build, which turns the feature off. The pattern is mapping input only.
     CenterOnLocation_t g_centerOnLocation = nullptr;
 
     constexpr const char* kCenterOnLocationPattern =
@@ -710,8 +710,9 @@ void ResolveDroneMapFollow(IPluginSelf* self, IPluginHookScanner* scanner)
     if (!self || !scanner)
         return;
 
-    g_centerOnLocation = reinterpret_cast<CenterOnLocation_t>(DroneFields::ResolveFunction(self, scanner,
-        DroneFields::Keys::MapCenterOnLocation, kCenterOnLocationPattern));
+    g_centerOnLocation = PluginMap::FunctionAs<CenterOnLocation_t>(scanner, self,
+        DroneFields::Keys::MapCenterOnLocation, kCenterOnLocationPattern,
+        PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
 }
 
 void ShutdownDroneMapFollow()
