@@ -8,3 +8,4 @@
 - New option Keep Area Around Body Loaded: the world around your parked character stays loaded while the drone is out (on by default)
 - Hold Ctrl (rebindable) in the drone to fly slower, by the new Slow Multiplier row; it wins over Boost
 - The map follows the drone while you fly; pan it by hand to stop
+- The system voice (rupture warnings and other spoken lines) stays audible while the drone is far from your body; with other players in the game it may still fade

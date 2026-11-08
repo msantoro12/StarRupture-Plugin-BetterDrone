@@ -1,5 +1,6 @@
 #include "drone_audio.h"
 #include "drone_config.h"
+#include "drone_interact.h"
 #include "object_ref.h"
 #include "plugin_helpers.h"
 #include "drone_fields.h"
@@ -181,6 +182,110 @@ namespace DroneAudio
             for (int v = 0; v < kVolCount; ++v)
                 g_vol[v].store(DroneConfig::Config::ReadPanel(DroneConfig::AudioVolumeId(v)), std::memory_order_relaxed);
         }
+
+        // The system voice is a sound on the parked body, attenuated by its
+        // distance to the listener, which is the drone camera. Each line
+        // reads the character's attenuation asset when it starts, so the
+        // distance falloff, the panning and the occlusion check against the
+        // terrain in between are switched off on the asset itself while the
+        // drone is out, and put back afterwards. The component that plays a
+        // line cannot be moved instead: a line starting beyond the falloff
+        // range is dropped before the next tick could move it.
+        //
+        // The third-person asset may also serve the other players' characters,
+        // so it is only changed while nobody else is in the session.
+        struct AttenuationBits
+        {
+            bool attenuate;
+            bool spatialize;
+            bool lowPass;
+            bool occlusion;
+        };
+
+        AttenuationBits ReadBits(const SDK::FSoundAttenuationSettings& settings)
+        {
+            return { settings.bAttenuate != 0, settings.bSpatialize != 0,
+                     settings.bAttenuateWithLPF != 0, settings.bEnableOcclusion != 0 };
+        }
+
+        void WriteBits(SDK::FSoundAttenuationSettings& settings, const AttenuationBits& bits)
+        {
+            settings.bAttenuate        = bits.attenuate;
+            settings.bSpatialize       = bits.spatialize;
+            settings.bAttenuateWithLPF = bits.lowPass;
+            settings.bEnableOcclusion  = bits.occlusion;
+        }
+
+        struct SavedAttenuation
+        {
+            ObjectRef<SDK::USoundAttenuation> asset;
+            AttenuationBits original;
+        };
+        std::vector<SavedAttenuation> g_savedAttenuation;
+
+        std::vector<SavedAttenuation>::iterator FindSaved(SDK::USoundAttenuation* asset)
+        {
+            auto it = g_savedAttenuation.begin();
+            while (it != g_savedAttenuation.end() && it->asset.Get() != asset)
+                ++it;
+            return it;
+        }
+
+        bool SameBits(const AttenuationBits& a, const AttenuationBits& b)
+        {
+            return a.attenuate == b.attenuate && a.spatialize == b.spatialize &&
+                   a.lowPass == b.lowPass && a.occlusion == b.occlusion;
+        }
+
+        void RemoveFalloff(SDK::USoundAttenuation* asset)
+        {
+            if (!asset) return;
+
+            if (FindSaved(asset) == g_savedAttenuation.end())
+            {
+                g_savedAttenuation.push_back({ ObjectRef<SDK::USoundAttenuation>(asset), ReadBits(asset->Attenuation) });
+                LOG_INFO("DroneAudio: the system voice plays without distance falloff while the drone is out");
+            }
+
+            const AttenuationBits off{ false, false, false, false };
+            if (!SameBits(ReadBits(asset->Attenuation), off))
+                WriteBits(asset->Attenuation, off);
+        }
+
+        // Puts one asset back, if it was changed.
+        void RestoreFalloff(SDK::USoundAttenuation* asset)
+        {
+            if (!asset) return;
+
+            auto it = FindSaved(asset);
+            if (it == g_savedAttenuation.end())
+                return;
+
+            WriteBits(asset->Attenuation, it->original);
+            g_savedAttenuation.erase(it);
+            LOG_INFO("DroneAudio: the system voice keeps the game's own falloff on an asset shared with other players");
+        }
+
+        void RestoreAllFalloff()
+        {
+            for (const SavedAttenuation& saved : g_savedAttenuation)
+            {
+                if (SDK::USoundAttenuation* asset = saved.asset.Get())
+                    WriteBits(asset->Attenuation, saved.original);
+            }
+            if (!g_savedAttenuation.empty())
+                LOG_INFO("DroneAudio: the system voice plays with the game's own falloff again");
+            g_savedAttenuation.clear();
+        }
+
+        // True unless the local player is the only one in the session. A missing
+        // game state or an empty player list (the world is being torn down)
+        // counts as others being present.
+        bool OthersInSession()
+        {
+            SDK::UWorld* world = PluginSdkRuntime::GetWorld();
+            return !world || !world->GameState || world->GameState->PlayerArray.Num() != 1;
+        }
     }
 
     void Initialize()
@@ -269,5 +374,37 @@ namespace DroneAudio
             g_stationApplyTimer = 0.0f;
             ApplyStationVolumes();
         }
+    }
+
+    void TickAnnouncer()
+    {
+        SDK::ACrCharacterPlayerBase* character = LocalPlayerCharacter();
+        if (!character || DroneFields::Dead(character) || !DroneFields::InDrone(character))
+        {
+            RestoreAllFalloff();
+            return;
+        }
+
+        SDK::USoundAttenuation* fpp = DroneFields::ValueOr(DroneFields::AttenuationFPP, character);
+        SDK::USoundAttenuation* tpp = DroneFields::ValueOr(DroneFields::AttenuationTPP, character);
+
+        // One asset under both names counts as the shared one.
+        if (fpp != tpp)
+            RemoveFalloff(fpp);
+
+        if (OthersInSession())
+            RestoreFalloff(tpp);
+        else
+            RemoveFalloff(tpp);
+    }
+
+    void ShutdownAnnouncer()
+    {
+        if (OnGameThread())
+            RestoreAllFalloff();
+        else if (!g_savedAttenuation.empty())
+            LOG_WARN("DroneAudio: shut down off the game thread with the system voice falloff off; it stays off until the game restarts");
+
+        g_savedAttenuation.clear();
     }
 }

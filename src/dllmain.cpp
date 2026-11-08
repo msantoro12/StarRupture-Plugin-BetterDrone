@@ -84,6 +84,8 @@ static void OnEngineTick(float deltaSeconds)
     TickDroneBodyAnchor();
     if (DroneFields::Features::Audio.On())
         DroneAudio::Tick(deltaSeconds);
+    if (DroneFields::Features::Announcer.On())
+        DroneAudio::TickAnnouncer();
     if (DroneFields::Features::MiningLaser.On())
         TickDroneLaser(deltaSeconds);
     TickDroneMenuClose();
@@ -259,6 +261,8 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     ShutdownWavePatch();
     if (DroneFields::Features::Audio.On())
         DroneAudio::Shutdown();
+    if (DroneFields::Features::Announcer.On())
+        DroneAudio::ShutdownAnnouncer();
     if (DroneFields::Features::MapMarker.On())
         ShutdownDroneMapMarker(g_self);
     if (DroneFields::Features::Speedometer.On())

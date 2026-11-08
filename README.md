@@ -87,6 +87,10 @@ The game loads the world around the view, and in the drone the view is the drone
 
 Cost: memory and some actor ticks for that area, about what standing there costs. It adds no GPU time, since that area is beyond the drone's view. Turn it off with `Keep Area Around Body Loaded` if you would rather not pay for it.
 
+### System voice from the drone <sup>[✦](#msantoro12)</sup>
+
+The game's system voice (rupture warnings and the other spoken lines) plays from your parked character, so it fades out as the drone flies away. While the drone is out, BetterDrone turns off the distance falloff on the attenuation settings the game plays those lines with, so they stay audible far from your body, and puts them back when the drone is recalled. The game has one such setting for first person and one for third person, and other players' characters may share the third-person one. So when other players are in the game, BetterDrone leaves that one alone, and the voice may still fade when the drone is far out. No setting.
+
 ### Wave shelter <sup>[✦](#msantoro12)</sup>
 
 You can fly the drone outside during a wave while your character stays safe in the shelter and won't die. Shelter is judged at your character's body, not at the drone, and shelter built or deconstructed around it mid-flight counts at once. With `Always Allow Drone` off, the stock rule that ends the drone in an interior follows your character too, so flying the drone into one no longer ends it. No setting.
