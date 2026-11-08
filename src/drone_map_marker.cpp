@@ -753,7 +753,7 @@ void ResolveDroneMapFollow(IPluginSelf* self, IPluginHookScanner* scanner)
         return;
 
     g_centerOnLocation = PluginMap::FunctionAs<CenterOnLocation_t>(scanner, self,
-        DroneFields::Keys::MapCenterOnLocation, kCenterOnLocationPattern,
+        DroneFields::Keys::MapCenterOnLocation, PLUGIN_MAP_PATTERN(kCenterOnLocationPattern),
         PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
 }
 
