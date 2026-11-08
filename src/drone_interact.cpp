@@ -1078,11 +1078,11 @@ void ResolveDroneInteract(IPluginSelf* self, IPluginHookScanner* scanner)
     if (DroneFields::Features::HoldTakeAll.On())
     {
         g_contextStarted = PluginMap::FunctionAs<InteractVoid_t>(scanner, self, DroneFields::Keys::ContextStarted,
-            kContextStartedPattern, PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
+            PLUGIN_MAP_PATTERN(kContextStartedPattern), PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
         g_context = PluginMap::FunctionAs<InteractVoid_t>(scanner, self, DroneFields::Keys::Context,
-            kContextPattern, PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
+            PLUGIN_MAP_PATTERN(kContextPattern), PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
         g_contextCompleted = PluginMap::FunctionAs<InteractVoid_t>(scanner, self, DroneFields::Keys::ContextCompleted,
-            kContextCompletedPattern, PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
+            PLUGIN_MAP_PATTERN(kContextCompletedPattern), PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
     }
 }
 
