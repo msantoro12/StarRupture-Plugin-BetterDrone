@@ -228,6 +228,9 @@ namespace DroneFields
 		inline constexpr const char* InteractStarted    = "ACrPlayerControllerBase::NativeOnInputInteractStarted";
 		inline constexpr const char* InteractCompleted  = "ACrPlayerControllerBase::NativeOnInputInteractCompleted";
 		inline constexpr const char* Interact           = "ACrPlayerControllerBase::NativeOnInputInteract";
+		inline constexpr const char* ContextStarted     = "ACrPlayerControllerBase::NativeOnInputInteractContextStarted";
+		inline constexpr const char* Context            = "ACrPlayerControllerBase::NativeOnInputInteractContext";
+		inline constexpr const char* ContextCompleted   = "ACrPlayerControllerBase::NativeOnInputInteractContextCompleted";
 		inline constexpr const char* MapMenu            = "ACrPlayerControllerBase::NativeOnInputMapMenu";
 		inline constexpr const char* UncoverFog         = "UCrMapManuSubsystem::UncoverFogOfWar";
 		inline constexpr const char* CancelTool         = "ACrCharacterPlayerBase::NativeOnWeaponCancelTool";
@@ -288,6 +291,14 @@ namespace DroneFields
 				CurrentInteractableActor, PlayerControlState, DroneCamera, ComponentToWorld, TransformTranslation),
 			{ "Interaction.Interact In Drone Mode", "Interaction.Interact Key" } };
 
+		// Holding the game's context key takes everything from the target, as
+		// on foot. A part of its own: a game build without these three keys
+		// loses only this, and the interact key keeps working.
+		inline PluginMap::Feature HoldTakeAll{ "hold-take-all", "Hold the interact key to take all",
+			PluginMap::KeysOf(Keys::ContextStarted, Keys::Context, Keys::ContextCompleted,
+				NativeInputActions, NativeInputAction, NativeInputHandler, NativeInputActionSize),
+			{} };
+
 		inline PluginMap::Feature MapOpen{ "drone-map", "Open the map from the drone",
 			PluginMap::KeysOf(Keys::MapMenu),
 			{ "Interaction.Map In Drone Mode", "Interaction.Map Key" } };
@@ -318,7 +329,7 @@ namespace DroneFields
 		{
 			return PluginMap::DeclareFeatures(scanner, self, MiningLaser, MapReveal, MapMarker, Limits, SprintKey,
 				Announcer,
-				AlwaysAllow, WaveShelter, Interaction, MapOpen, BuildMenu, Speedometer, SpeedometerHeight, Audio);
+				AlwaysAllow, WaveShelter, Interaction, HoldTakeAll, MapOpen, BuildMenu, Speedometer, SpeedometerHeight, Audio);
 		}
 	}
 

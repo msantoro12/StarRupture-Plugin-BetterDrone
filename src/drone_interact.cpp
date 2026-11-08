@@ -86,6 +86,24 @@ namespace
     constexpr const char* kInteractPattern =
         "40 55 56 41 56 41 57 48 8B EC 48 83 EC 78";
 
+    // The context interaction (the game's "hold to take all"): Started picks
+    // what the target offers, Context runs it, Completed drops it. Each takes
+    // only the controller. Called by this plugin, never hooked. Resolved during
+    // OnPluginLoadHooks; null means the key is missing on this build, which
+    // turns off only the hold (DroneFields::Features::HoldTakeAll).
+    InteractVoid_t g_contextStarted   = nullptr;
+    InteractVoid_t g_context          = nullptr;
+    InteractVoid_t g_contextCompleted = nullptr;
+
+    constexpr const char* kContextStartedPattern =
+        "40 55 56 41 56 41 57 48 8B EC 48 83 EC 68 45 33 FF";
+    constexpr const char* kContextPattern =
+        "40 57 48 81 EC 90 00 00 00 80 3D ?? ?? ?? ?? 00 48 8B F9 48 8B 81 ?? ?? ?? ??";
+    // The controller member it clears (0xD90) is wildcarded to its low byte:
+    // with the whole offset open the pattern also matches seven other functions.
+    constexpr const char* kContextCompletedPattern =
+        "48 83 EC 38 48 81 C1 ?? 0D 00 00 48 8D 44 24 20 0F 57 C0 F3 0F 7F 44 24 20 48 3B C8 74 ?? 48 C7 01";
+
     HookHandle g_hookTargetsChanged    = nullptr;
     HookHandle g_hookInteractStarted   = nullptr;
     HookHandle g_hookInteractCompleted = nullptr;
@@ -881,6 +899,16 @@ void ResolveDroneInteract(IPluginSelf* self, IPluginHookScanner* scanner)
         DroneFields::Keys::InteractCompleted, kInteractCompletedPattern);
     g_addrInteract = DroneFields::ResolveFunction(self, scanner,
         DroneFields::Keys::Interact, kInteractPattern);
+
+    if (DroneFields::Features::HoldTakeAll.On())
+    {
+        g_contextStarted = PluginMap::FunctionAs<InteractVoid_t>(scanner, self, DroneFields::Keys::ContextStarted,
+            kContextStartedPattern, PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
+        g_context = PluginMap::FunctionAs<InteractVoid_t>(scanner, self, DroneFields::Keys::Context,
+            kContextPattern, PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
+        g_contextCompleted = PluginMap::FunctionAs<InteractVoid_t>(scanner, self, DroneFields::Keys::ContextCompleted,
+            kContextCompletedPattern, PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
+    }
 }
 
 bool InitDroneInteract()

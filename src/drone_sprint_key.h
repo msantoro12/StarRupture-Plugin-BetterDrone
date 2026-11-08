@@ -43,6 +43,13 @@ int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize,
 int ResolveInputHandlerVk(const SDK::UClass* handlerClass, char* outKeyName, size_t outKeyNameSize,
                           InputLookup* outStatus = nullptr, const char** outWhy = nullptr);
 
+// How long the game's input mapping makes the player hold the key of a native
+// input handler class (a Hold trigger's HoldTimeThreshold, on the key mapping
+// or on the action), in seconds. False when the class has no action loaded or
+// no Hold trigger with a positive time; *outSeconds is then untouched. Game
+// thread only.
+bool ResolveInputHandlerHoldSeconds(const SDK::UClass* handlerClass, float* outSeconds);
+
 // One key that follows a game input action (Sprint for the boost key, Reload
 // for the laser's vent): looked up through ResolveInputHandlerVk, kept as a
 // VK for the tick to poll, and looked up again when the game may have changed

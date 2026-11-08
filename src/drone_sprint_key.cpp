@@ -142,6 +142,59 @@ namespace
 
         return false;
     }
+
+    // The first Hold trigger among `triggers`, or null.
+    const SDK::UInputTriggerHold* HoldAmong(const SDK::TArray<SDK::UInputTrigger*>& triggers)
+    {
+        const int32_t count = triggers.Num();
+        for (int32_t i = 0; i < count; ++i)
+        {
+            const SDK::UInputTrigger* trigger = triggers[i];
+            if (trigger && trigger->IsA(SDK::UInputTriggerHold::StaticClass()))
+                return static_cast<const SDK::UInputTriggerHold*>(trigger);
+        }
+
+        return nullptr;
+    }
+
+    // The Hold trigger on a key mapping of `action` among `mappings`, or null.
+    const SDK::UInputTriggerHold* HoldFor(const SDK::TArray<SDK::FEnhancedActionKeyMapping>& mappings,
+                                          const SDK::UInputAction* action)
+    {
+        const int32_t count = mappings.Num();
+        for (int32_t i = 0; i < count; ++i)
+        {
+            if (mappings[i].Action != action)
+                continue;
+
+            if (const SDK::UInputTriggerHold* hold = HoldAmong(mappings[i].Triggers))
+                return hold;
+        }
+
+        return nullptr;
+    }
+
+    const SDK::UInputTriggerHold* HoldInDefaultContexts(const SDK::UInputAction* action)
+    {
+        auto* objects = SDK::UObject::GObjects.GetTypedPtr();
+        const SDK::UClass* contextClass = SDK::UInputMappingContext::StaticClass();
+        if (!objects || !contextClass)
+            return nullptr;
+
+        const int32_t count = objects->Num();
+        for (int32_t i = 0; i < count; ++i)
+        {
+            SDK::UObject* obj = objects->GetByIndex(i);
+            if (!obj || obj->IsDefaultObject() || !obj->IsA(contextClass))
+                continue;
+
+            if (const SDK::UInputTriggerHold* hold =
+                    HoldFor(static_cast<SDK::UInputMappingContext*>(obj)->Mappings, action))
+                return hold;
+        }
+
+        return nullptr;
+    }
 }
 
 // Deliberately reads mappings as plain data rather than calling
@@ -212,6 +265,39 @@ int ResolveInputHandlerVk(const SDK::UClass* handlerClass, char* outKeyName, siz
     if (outWhy)
         *outWhy = found ? nullptr : why;
     return found ? vk : 0;
+}
+
+bool ResolveInputHandlerHoldSeconds(const SDK::UClass* handlerClass, float* outSeconds)
+{
+    try
+    {
+        const SDK::UInputAction* action = FindInputActionFor(handlerClass);
+        if (!action)
+            return false;
+
+        // The applied mappings first, as for the key, then the mapping
+        // contexts: an action the game has unbound for the moment (the context
+        // interact in the drone) is still held by its context. The action's
+        // own triggers count too, as Enhanced Input runs them on every mapping.
+        const char* why = nullptr;
+        const SDK::TArray<SDK::FEnhancedActionKeyMapping>* applied = AppliedMappings(why);
+
+        const SDK::UInputTriggerHold* hold = applied ? HoldFor(*applied, action) : nullptr;
+        if (!hold)
+            hold = HoldInDefaultContexts(action);
+        if (!hold)
+            hold = HoldAmong(action->Triggers);
+        if (!hold || !(hold->HoldTimeThreshold > 0.0f))
+            return false;
+
+        if (outSeconds)
+            *outSeconds = hold->HoldTimeThreshold;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
 }
 
 int ResolveSprintVk(char* outKeyName, size_t outKeyNameSize, InputLookup* outStatus, const char** outWhy)
