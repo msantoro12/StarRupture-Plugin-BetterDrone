@@ -3,7 +3,7 @@
 #include "drone_config.h"
 #include "drone_audio.h"
 #include "panel_settings.h"
-#include "preset_store.h"
+#include "plugin_presets.h"
 #include "ui_widgets.h"
 #include "drone_interact.h"
 #include "plugin_helpers.h"
@@ -15,11 +15,8 @@
 #include <cstring>
 #include <mutex>
 
-// preset_store.h declares BetterDrone::PresetStore; alias it down to the
-// bare PresetStore:: used throughout the saved-presets code below.
-namespace PresetStore = BetterDrone::PresetStore;
-
 static IPluginSelf* s_self = nullptr;
+static PluginPresets::Store s_presets([](const char* line) { LOG_WARN("%s", line); });
 static PanelHandle s_panelHandle = nullptr;
 static std::atomic<bool> s_menuOpen{ false };
 static std::atomic<bool> s_openRequested{ false };
@@ -379,7 +376,7 @@ void InitDroneUI(IPluginSelf* self)
 
     char presetsPath[MAX_PATH] = {};
     GetPresetsFilePath(presetsPath, sizeof(presetsPath));
-    PresetStore::Init(presetsPath);
+    s_presets.LoadFile(presetsPath);
 
     static PluginPanelDesc desc{};
     desc.buttonLabel = "BetterDrone";
@@ -545,19 +542,19 @@ void TickDroneMenuOpen()
 }
 
 // ---------------------------------------------------------------------------
-// Saved presets (PresetStore-backed) -- the player's own tweaks, named and
+// Saved presets (PluginPresets-backed) -- the player's own tweaks, named and
 // kept apart from the built-in tables in panel_settings.h. Per group: a live-fields
 // getter (for Save), an apply function (for picking one from the dropdown),
 // a built-in-name check (so a saved preset can never collide with, rename
 // onto, or shadow a built-in), and a suggested-base-name computer (the
-// "<matched built-in> Custom" / "Custom" rule -- PresetStore::SuggestName
+// "<matched built-in> Custom" / "Custom" rule -- PluginPresets::Store::SuggestName
 // only handles making that name unique, not choosing it).
 // ---------------------------------------------------------------------------
 
 constexpr const char* kSpeedGroup = "Speed";
 constexpr int         kSpeedFieldCount = 4;
 
-static void GetLiveSpeedFields(PresetStore::Field* out)
+static void GetLiveSpeedFields(PluginPresets::Field* out)
 {
     out[0] = { "speedPerSec",     DroneConfig::Config::ReadSpeedPerSec() };
     out[1] = { "boostMultiplier", DroneConfig::Config::ReadBoostMultiplier() };
@@ -565,7 +562,7 @@ static void GetLiveSpeedFields(PresetStore::Field* out)
     out[3] = { "deceleration",    DroneConfig::Config::ReadDeceleration() };
 }
 
-static void ApplySpeedFields(const PresetStore::Field* fields, int count)
+static void ApplySpeedFields(const PluginPresets::Field* fields, int count)
 {
     float speed = DroneConfig::Config::ReadSpeedPerSec();
     float boost = DroneConfig::Config::ReadBoostMultiplier();
@@ -599,13 +596,13 @@ static void ComputeSpeedSuggestedBase(char* out, int cap)
 constexpr const char* kRangeGroup = "Range";
 constexpr int         kRangeFieldCount = 2;
 
-static void GetLiveRangeFields(PresetStore::Field* out)
+static void GetLiveRangeFields(PluginPresets::Field* out)
 {
     out[0] = { "maxRadius", DroneConfig::Config::ReadMaxRadius() };
     out[1] = { "maxHeight", DroneConfig::Config::ReadMaxHeight() };
 }
 
-static void ApplyRangeFields(const PresetStore::Field* fields, int count)
+static void ApplyRangeFields(const PluginPresets::Field* fields, int count)
 {
     float radius = DroneConfig::Config::ReadMaxRadius();
     float height = DroneConfig::Config::ReadMaxHeight();
@@ -632,187 +629,13 @@ static void ComputeRangeSuggestedBase(char* out, int cap)
         snprintf(out, cap, "Custom");
 }
 
-// Persists across frames per group: which saved preset is selected, and
-// whatever the rename field/delete confirm/last error are doing right now.
-struct PresetRowState
-{
-    char selected[PresetStore::kMaxNameLen] = {};
-    bool renaming = false;
-    char renameBuf[PresetStore::kMaxNameLen] = {};
-    char errorMsg[96] = {};
-};
+static PluginPresets::RowState s_speedPresetRow;
+static PluginPresets::RowState s_rangePresetRow;
 
-static PresetRowState s_speedPresetRow;
-static PresetRowState s_rangePresetRow;
-
-using GetLiveFieldsFn  = void (*)(PresetStore::Field* out);
-using ApplyFieldsFn    = void (*)(const PresetStore::Field* fields, int count);
-using IsBuiltinNameFn  = bool (*)(const char* name);
-using ComputeSuggestFn = void (*)(char* out, int cap);
-
-// The most saved presets a group's dropdown lists, and the preset hotkeys
-// step through.
-constexpr int kMaxSavedPresetsListed = 16;
-
-// Guards PresetStore and the saved-preset row state. The store is not
-// internally synchronized: the panel (render thread) and the preset
-// hotkeys (game tick) both go through it, so each takes this first.
+// Guards the saved-preset row state. The panel (render thread) and the
+// preset hotkeys (game tick) both read and write it, so each takes this
+// first. The store itself is internally synchronized.
 static std::mutex s_savedPresetsMutex;
-
-// Loads the stored preset `name` over the live values and applies it, the
-// one body behind picking a saved preset in the dropdown and stepping to
-// one with a hotkey. Returns false if the preset is gone.
-static bool ApplySavedPreset(const char* group, const char* name,
-                             PresetStore::Field* fields, int fieldCount,
-                             GetLiveFieldsFn getLive, ApplyFieldsFn apply)
-{
-    getLive(fields); // seed so a key missing from this preset stays unchanged
-    if (!PresetStore::Load(group, name, fields, fieldCount))
-        return false;
-
-    apply(fields, fieldCount);
-    return true;
-}
-
-// A dropdown of the group's saved presets plus Save/Rename/Delete, in
-// addition to (not replacing) the built-in preset buttons above it. Save
-// never prompts -- it computes the suggested name itself and selects the
-// result, so it stays one click.
-static void RenderSavedPresetsRow(IModLoaderImGui* ui, const char* idScope, const char* group,
-                            PresetStore::Field* fields, int fieldCount,
-                            GetLiveFieldsFn getLive, ApplyFieldsFn apply,
-                            IsBuiltinNameFn isBuiltin, ComputeSuggestFn computeSuggest,
-                            PresetRowState& state)
-{
-    std::lock_guard<std::mutex> lock(s_savedPresetsMutex);
-
-    ui->PushIDStr(idScope);
-
-    char names[kMaxSavedPresetsListed][PresetStore::kMaxNameLen];
-    const int count = PresetStore::ListNames(group, names, kMaxSavedPresetsListed);
-
-    bool selectedStillValid = false;
-    for (int i = 0; i < count; ++i)
-        if (strcmp(names[i], state.selected) == 0)
-            selectedStillValid = true;
-    if (!selectedStillValid)
-        state.selected[0] = '\0';
-
-    ui->AlignTextToFramePadding();
-    ui->Text("Saved Presets");
-    ui->SameLine(0.0f, -1.0f);
-
-    ui->SetNextItemWidth(220.0f);
-    const char* preview = state.selected[0] ? state.selected : "(none saved)";
-    if (ui->BeginCombo("##saved", preview))
-    {
-        for (int i = 0; i < count; ++i)
-        {
-            const bool isSelected = (strcmp(names[i], state.selected) == 0);
-            if (ui->Selectable(names[i], isSelected))
-            {
-                snprintf(state.selected, sizeof(state.selected), "%s", names[i]);
-                ApplySavedPreset(group, state.selected, fields, fieldCount, getLive, apply);
-            }
-        }
-        ui->EndCombo();
-    }
-
-    ui->SameLine(0.0f, -1.0f);
-    if (ui->SmallButton("Save"))
-    {
-        char base[PresetStore::kMaxNameLen];
-        computeSuggest(base, sizeof(base));
-        char suggested[PresetStore::kMaxNameLen];
-        PresetStore::SuggestName(group, base, suggested, sizeof(suggested));
-
-        getLive(fields);
-        if (PresetStore::Save(group, suggested, fields, fieldCount))
-        {
-            snprintf(state.selected, sizeof(state.selected), "%s", suggested);
-            state.errorMsg[0] = '\0';
-        }
-        else
-        {
-            snprintf(state.errorMsg, sizeof(state.errorMsg), "Could not save -- presets file unavailable.");
-        }
-    }
-
-    const bool hasSelection = state.selected[0] != '\0';
-
-    ui->SameLine(0.0f, -1.0f);
-    ui->BeginDisabled(!hasSelection);
-    if (ui->SmallButton("Rename"))
-    {
-        state.renaming = true;
-        snprintf(state.renameBuf, sizeof(state.renameBuf), "%s", state.selected);
-        state.errorMsg[0] = '\0';
-    }
-    ui->EndDisabled();
-
-    char deletePopupId[80];
-    snprintf(deletePopupId, sizeof(deletePopupId), "Delete preset?##%s", group);
-
-    ui->SameLine(0.0f, -1.0f);
-    ui->BeginDisabled(!hasSelection);
-    if (ui->SmallButton("Delete"))
-        ui->OpenPopup(deletePopupId, 0);
-    ui->EndDisabled();
-
-    if (ui->BeginPopupModal(deletePopupId, nullptr, 0))
-    {
-        ui->Text("Delete this saved preset?");
-        ui->TextDisabled(state.selected);
-        ui->Spacing();
-        if (ui->SmallButton("Delete##confirm"))
-        {
-            PresetStore::Delete(group, state.selected);
-            state.selected[0] = '\0';
-            ui->CloseCurrentPopup();
-        }
-        ui->SameLine(0.0f, -1.0f);
-        if (ui->SmallButton("Cancel##delete"))
-            ui->CloseCurrentPopup();
-        ui->EndPopup();
-    }
-
-    if (state.renaming)
-    {
-        ui->SetNextItemWidth(200.0f);
-        ui->InputText("##rename", state.renameBuf, sizeof(state.renameBuf));
-
-        ui->SameLine(0.0f, -1.0f);
-        if (ui->SmallButton("OK##rename"))
-        {
-            if (isBuiltin(state.renameBuf))
-            {
-                snprintf(state.errorMsg, sizeof(state.errorMsg), "\"%s\" is a built-in preset name.", state.renameBuf);
-            }
-            else if (PresetStore::Rename(group, state.selected, state.renameBuf))
-            {
-                snprintf(state.selected, sizeof(state.selected), "%s", state.renameBuf);
-                state.renaming = false;
-                state.errorMsg[0] = '\0';
-            }
-            else
-            {
-                snprintf(state.errorMsg, sizeof(state.errorMsg), "\"%s\" is already used.", state.renameBuf);
-            }
-        }
-
-        ui->SameLine(0.0f, -1.0f);
-        if (ui->SmallButton("Cancel##rename"))
-        {
-            state.renaming = false;
-            state.errorMsg[0] = '\0';
-        }
-    }
-
-    if (state.errorMsg[0])
-        ui->TextColored(1.0f, 0.4f, 0.4f, 1.0f, state.errorMsg);
-
-    ui->PopID();
-}
 
 // ---------------------------------------------------------------------------
 // Speed preset hotkeys. "Previous Preset Key" and "Next Preset Key" step
@@ -820,8 +643,8 @@ static void RenderSavedPresetsRow(IModLoaderImGui* ui, const char* idScope, cons
 // saved dropdown), slowest to fastest, while the drone is out. The keybind
 // callbacks only raise a flag; the step is applied from the game tick.
 //
-// The tick reads PresetStore, which the panel also uses from the render
-// thread, so s_savedPresetsMutex covers every PresetStore call on both
+// The tick reads the preset store, which the panel also uses from the render
+// thread, so s_savedPresetsMutex covers every saved-preset row call on both
 // sides. It is held only while the dial is built and chosen from, never
 // across the settings writes that apply a stop.
 // ---------------------------------------------------------------------------
@@ -831,12 +654,12 @@ namespace
     // One stop on the speed dial.
     struct SpeedStop
     {
-        char                       name[PresetStore::kMaxNameLen];
+        char                       name[PluginPresets::kMaxNameLen];
         bool                       saved;
         PanelSettings::SpeedValues values;
     };
 
-    constexpr int       kMaxSpeedStops = PanelSettings::kSpeedPresetCount + kMaxSavedPresetsListed;
+    constexpr int       kMaxSpeedStops = PanelSettings::kSpeedPresetCount + PluginPresets::kMaxListed;
     constexpr ULONGLONG kToastMs       = 1500;
 
     // Raised by the keybind callbacks, consumed on the game tick.
@@ -873,13 +696,13 @@ namespace
         for (const PanelSettings::SpeedPreset& p : PanelSettings::kSpeedPresets)
             add(p.label, false, PanelSettings::SpeedValuesOf(p));
 
-        char names[kMaxSavedPresetsListed][PresetStore::kMaxNameLen];
-        const int savedCount = PresetStore::ListNames(kSpeedGroup, names, kMaxSavedPresetsListed);
+        char names[PluginPresets::kMaxListed][PluginPresets::kMaxNameLen];
+        const int savedCount = s_presets.ListNames(kSpeedGroup, names, PluginPresets::kMaxListed);
         for (int i = 0; i < savedCount; ++i)
         {
-            PresetStore::Field fields[kSpeedFieldCount];
+            PluginPresets::Field fields[kSpeedFieldCount];
             GetLiveSpeedFields(fields); // a key missing from the preset keeps the live value
-            if (!PresetStore::Load(kSpeedGroup, names[i], fields, kSpeedFieldCount))
+            if (!s_presets.Get(kSpeedGroup, names[i], fields, kSpeedFieldCount))
                 continue;
 
             add(names[i], true, { fields[0].value, fields[1].value, fields[2].value, fields[3].value });
@@ -895,7 +718,7 @@ namespace
     struct PresetToast
     {
         std::mutex mutex;
-        char       name[PresetStore::kMaxNameLen] = {};
+        char       name[PluginPresets::kMaxNameLen] = {};
         float      speedPerSec = 0.0f;
         float      boostSpeedPerSec = 0.0f;
     };
@@ -934,7 +757,7 @@ namespace
         s_toastHints.pos_x = displayW;
         s_toastHints.pos_y = 0.0f;
 
-        char  name[PresetStore::kMaxNameLen];
+        char  name[PluginPresets::kMaxNameLen];
         float speedPerSec;
         float boostSpeedPerSec;
         {
@@ -997,14 +820,14 @@ namespace
 
         bool      apply  = false;
         SpeedStop target = {};
-        char      shownName[PresetStore::kMaxNameLen] = {};
+        char      shownName[PluginPresets::kMaxNameLen] = {};
         {
             std::lock_guard<std::mutex> lock(s_savedPresetsMutex);
 
             SpeedStop stops[kMaxSpeedStops];
             const int count = CollectSpeedStops(stops);
 
-            PresetStore::Field liveFields[kSpeedFieldCount];
+            PluginPresets::Field liveFields[kSpeedFieldCount];
             GetLiveSpeedFields(liveFields);
             const PanelSettings::SpeedValues live = {
                 liveFields[0].value, liveFields[1].value, liveFields[2].value, liveFields[3].value };
@@ -1206,8 +1029,9 @@ void RenderDronePanel(IModLoaderImGui* ui)
     ui->Spacing();
 
     {
-        PresetStore::Field speedFields[kSpeedFieldCount];
-        RenderSavedPresetsRow(ui, "speed_saved", kSpeedGroup, speedFields, kSpeedFieldCount,
+        PluginPresets::Field speedFields[kSpeedFieldCount];
+        std::lock_guard<std::mutex> lock(s_savedPresetsMutex);
+        PluginPresets::RenderSavedRow(ui, s_presets, "speed_saved", kSpeedGroup, speedFields, kSpeedFieldCount,
                                &GetLiveSpeedFields, &ApplySpeedFields,
                                &IsBuiltinSpeedName, &ComputeSpeedSuggestedBase, s_speedPresetRow);
     }
@@ -1334,8 +1158,9 @@ void RenderDronePanel(IModLoaderImGui* ui)
     ui->Spacing();
 
     {
-        PresetStore::Field rangeFields[kRangeFieldCount];
-        RenderSavedPresetsRow(ui, "range_saved", kRangeGroup, rangeFields, kRangeFieldCount,
+        PluginPresets::Field rangeFields[kRangeFieldCount];
+        std::lock_guard<std::mutex> lock(s_savedPresetsMutex);
+        PluginPresets::RenderSavedRow(ui, s_presets, "range_saved", kRangeGroup, rangeFields, kRangeFieldCount,
                                &GetLiveRangeFields, &ApplyRangeFields,
                                &IsBuiltinRangeName, &ComputeRangeSuggestedBase, s_rangePresetRow);
     }
