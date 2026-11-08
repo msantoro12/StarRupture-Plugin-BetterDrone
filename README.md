@@ -55,6 +55,8 @@ At either end the toast shows where you are. Off every preset, a step goes to th
 
 Fly up to a building, look at it and press the interact key (**E**; rebindable on the loader's Config page, Interaction) to open its UI, as you would on foot. It also works in delete mode, and gathers wild plants, fruit and eggs (host and single player only).
 
+Hold the game's context interact key (**E** by default, rebinds included) on a building for as long as the game asks you to on foot, and the drone takes everything it offers, as holding it does on foot. A short press stays the plain interact. <sup>[✦](#msantoro12)</sup>
+
 ### The map from the drone <sup>[✦](#msantoro12)</sup>
 
 - **Open it:** the map key (**M**; rebindable on the loader's Config page, Interaction) opens the map while you fly and closes it again, never over another menu.
