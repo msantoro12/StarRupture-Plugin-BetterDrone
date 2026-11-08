@@ -43,17 +43,24 @@ namespace
     constexpr uint8_t kForwardCycle = kCyclePrevious;
     constexpr uint8_t kBackCycle    = kCycleNext;
 
-    // The wheel callback runs on the window's message thread and the call has to
-    // happen on the game thread, so the callback only queues the delta and
-    // OnTick makes the calls. g_inDrone is the tick's last answer, so the
+    // The wheel callback runs inside the window's message pump, so it only
+    // queues the delta and OnTick makes the game calls. g_inDrone is the tick's last answer, so the
     // callback can pass a notch on when the drone is not out without touching
     // the game's objects.
     std::atomic<bool>    g_inDrone{ false };
     std::atomic<int32_t> g_pendingRawDelta{ 0 };
 
+    // Most cycle calls made in one tick; a flick beyond a full turn of the
+    // hotbar only wraps around.
+    constexpr int32_t kMaxCyclesPerTick = 9;
+
+    // A part-notch is dropped after this long without wheel input.
+    constexpr float kRemainderTimeout = 0.5f;
+
     // Less than a notch left over, from a wheel that reports small steps.
     // Tick only.
     int32_t g_rawRemainder = 0;
+    float   g_remainderAge = 0.0f;
 
     bool OnMouseWheel(const PluginMouseWheelEvent* event, void*)
     {
@@ -74,7 +81,7 @@ namespace
         return true;
     }
 
-    void OnTick(float)
+    void OnTick(float deltaTime)
     {
         const bool inDrone = IsLocalPlayerInDrone();
         g_inDrone.store(inDrone, std::memory_order_relaxed);
@@ -85,6 +92,11 @@ namespace
             g_rawRemainder = 0;
             return;
         }
+
+        if (raw != 0)
+            g_remainderAge = 0.0f;
+        else if ((g_remainderAge += deltaTime) > kRemainderTimeout)
+            g_rawRemainder = 0;
 
         g_rawRemainder += raw;
         if (std::abs(g_rawRemainder) < kRawPerNotch)
@@ -98,15 +110,13 @@ namespace
             return;
         }
 
-        while (std::abs(g_rawRemainder) >= kRawPerNotch)
+        for (int32_t cycles = 0; cycles < kMaxCyclesPerTick && std::abs(g_rawRemainder) >= kRawPerNotch; ++cycles)
         {
             const bool forward = g_rawRemainder > 0;
             g_rawRemainder += forward ? -kRawPerNotch : kRawPerNotch;
 
             const uint8_t direction = forward ? kForwardCycle : kBackCycle;
             g_cycleWeapon(character, direction);
-            LOG_DEBUG("DroneHotbar: Ctrl + wheel %s, cycled to the %s slot",
-                      forward ? "forward" : "back", direction == kCycleNext ? "next" : "previous");
         }
     }
 }
@@ -149,4 +159,5 @@ void ShutdownDroneHotbar(IPluginSelf* self)
     g_inDrone.store(false, std::memory_order_relaxed);
     g_pendingRawDelta.store(0, std::memory_order_relaxed);
     g_rawRemainder = 0;
+    g_remainderAge = 0.0f;
 }
