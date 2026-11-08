@@ -127,7 +127,7 @@ void ResolveDroneHotbar(IPluginSelf* self, IPluginHookScanner* scanner)
         return;
 
     g_cycleWeapon = PluginMap::FunctionAs<CycleWeapon_t>(scanner, self, DroneFields::Keys::CycleWeapon,
-        kCycleWeaponPattern, PLUGIN_SCAN_FUNCTION_START,
+        PLUGIN_MAP_PATTERN(kCycleWeaponPattern), PLUGIN_SCAN_FUNCTION_START,
         PLUGIN_SCAN_FLAG_OPTIONAL | PLUGIN_SCAN_FLAG_FOLLOW_REL32, 0, kCycleWeaponCallAt);
 }
 
