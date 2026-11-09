@@ -286,7 +286,7 @@ namespace DroneFields
 
 		inline PluginMap::Feature MapFollow{ "map-follow", "Map follows the drone",
 			PluginMap::KeysOf(Keys::MapCenterOnLocation, MapAreaMatrix, MapMenuMapArea, MapCanvasPanel),
-			{} };
+			{ "Interaction.Map Centre Key" } };
 
 		inline PluginMap::Feature Limits{ "drone-limits", "Drone speed, boost, size and limits",
 			PluginMap::KeysOf(PlacementDeveloperSettings, SpeedPerSec, MaxRadius, WarningRadius, MaxHeight,

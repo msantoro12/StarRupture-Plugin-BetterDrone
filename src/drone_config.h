@@ -42,6 +42,7 @@ namespace DroneConfig
         static void ReadInteractKey(char* outBuffer, int bufferSize);
         static bool ReadMapInDroneMode();
         static void ReadMapKey(char* outBuffer, int bufferSize);
+        static void ReadMapCentreKey(char* outBuffer, int bufferSize);
         static bool ReadDroneRevealsMap();
         static void ReadToggleKey(char* outBuffer, int bufferSize);
         static void ReadPrevPresetKey(char* outBuffer, int bufferSize);

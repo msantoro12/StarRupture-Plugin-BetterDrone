@@ -64,7 +64,7 @@ Hold **Ctrl** and scroll the mouse wheel while the drone is out to change your h
 ### The map from the drone <sup>[✦](#msantoro12)</sup>
 
 - **Open it:** the map key (**M**; rebindable on the loader's Config page, Interaction) opens the map while you fly and closes it again, never over another menu.
-- **Follow:** the map opens centred on the drone and keeps it centred as you fly; zoom works as usual. Pan the map by hand (mouse drag, arrow keys, gamepad or the Center on player button) and it stops following until you reopen it. When the drone is recalled the map goes back to centring on your character, unless you moved it. No setting.
+- **Follow:** the map opens centred on the drone and keeps it centred as you fly; zoom works as usual. Pan the map by hand (mouse drag, arrow keys, gamepad or the Center on player button) and it stops following until you reopen it or press the map centre key. That key (**C**, the game's Center on player key; rebindable on the Config page, Interaction, and best set to match the game's) keeps the map on your character; press it again to follow the drone. Only the keyboard key toggles; the Center on player button and the gamepad count as panning. When the drone is recalled the map goes back to centring on your character, unless you moved it.
 - **Marker:** the drone gets its own, a small targeting reticle in your player-arrow colour (cyan if unreadable) that turns with the drone and keeps its size at any zoom. The game's arrow stays at your parked body. No setting. It hides if the map can't be matched to the game's markers, and stays off until RELOAD after a fault.
 - **Reveal:** `Drone Reveals Map` (off by default) uncovers the map as you fly, at the walking radius and spacing, upgrades included. Saved with your game. Not inside the Forgotten Engine.
 
@@ -118,6 +118,7 @@ Config is stored in `Plugins\config\BetterDrone.ini` and is generated on first l
 | `[Interaction]` | `Interact Key` | `E` | Match your game's interact key |
 | `[Interaction]` | `Map In Drone Mode` | `true` | Map from the drone |
 | `[Interaction]` | `Map Key` | `M` | Match your game's map key |
+| `[Interaction]` | `Map Centre Key` | `C` | Match your game's Center on player key |
 | `[Interaction]` | `Drone Reveals Map` | `false` | Flying uncovers the map |
 | `[Controls]` | `Toggle Key` | `F10` | Panel (BetterCheats' default too) |
 | `[Controls]` | `Boost Key` | `Sprint` | Held to boost; `Sprint` follows your Sprint key |

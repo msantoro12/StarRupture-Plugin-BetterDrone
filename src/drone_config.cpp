@@ -396,6 +396,7 @@ namespace DroneConfig
             { "Interaction", "Interact Key",           ConfigValueType::Keybind, "E",         "Key that triggers interaction while the drone is out, matching the game's own interact key.", 0.0f, 0.0f },
             { "Interaction", "Map In Drone Mode",      ConfigValueType::Boolean, "true",      "Opens the map from the drone.", 0.0f, 1.0f },
             { "Interaction", "Map Key",                ConfigValueType::Keybind, "M",         "Key that opens the map while the drone is out. Set it to the game's own map key.", 0.0f, 0.0f },
+            { "Interaction", "Map Centre Key",         ConfigValueType::Keybind, "C",         "Key that switches the open map between your character and the drone while the drone is out. Set it to the game's own Center on player key.", 0.0f, 0.0f },
             { "Interaction", "Drone Reveals Map",      ConfigValueType::Boolean, "false",     "Flying the drone uncovers the map the way walking does. What it uncovers is saved with your game.", 0.0f, 1.0f },
             // Matches BetterCheats' own ToggleKey default on purpose, so one
             // F10 press opens both panels. The loader dispatches a keypress
@@ -450,6 +451,11 @@ namespace DroneConfig
     void Config::ReadMapKey(char* outBuffer, int bufferSize)
     {
         ReadKeybind(s_self, "Interaction", "Map Key", "M", outBuffer, bufferSize);
+    }
+
+    void Config::ReadMapCentreKey(char* outBuffer, int bufferSize)
+    {
+        ReadKeybind(s_self, "Interaction", "Map Centre Key", "C", outBuffer, bufferSize);
     }
 
     void Config::ReadToggleKey(char* outBuffer, int bufferSize)

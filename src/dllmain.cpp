@@ -226,6 +226,8 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
         InitDroneHotbar(self);
     if (DroneFields::Features::MapOpen.On())
         InitDroneMap();
+    if (DroneFields::Features::MapFollow.On())
+        InitDroneMapFollow(self);
     if (DroneFields::Features::MapReveal.On())
         InitDroneFog();
     if (DroneFields::Features::BuildMenu.On())
@@ -273,7 +275,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
     if (DroneFields::Features::Announcer.On())
         DroneAudio::ShutdownAnnouncer();
     if (DroneFields::Features::MapFollow.On())
-        ShutdownDroneMapFollow();
+        ShutdownDroneMapFollow(g_self);
     if (DroneFields::Features::MapMarker.On())
         ShutdownDroneMapMarker(g_self);
     if (DroneFields::Features::Speedometer.On())
