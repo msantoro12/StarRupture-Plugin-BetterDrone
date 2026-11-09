@@ -67,6 +67,23 @@ namespace
         if (!event || event->size < sizeof(PluginMouseWheelEvent))
             return false;
 
+        // DIAG: say which gate rejected each vertical notch while in the drone.
+        if (event->rawDelta != 0 && event->rawDeltaH == 0 && g_inDrone.load(std::memory_order_relaxed))
+        {
+            const char* verdict = "queued";
+            if (event->uiCapturing)
+                verdict = "rejected: uiCapturing";
+            else if ((event->modifiers & PluginWheelMod_Ctrl) == 0)
+                verdict = "rejected: Ctrl not held";
+            else if (IsGameMenuOpen())
+                verdict = "rejected: game menu or map open";
+            LOG_INFO("DIAG DroneHotbar wheel: raw=%d mods=0x%x -> %s", (int)event->rawDelta, (unsigned)event->modifiers, verdict);
+        }
+        else if (event->rawDelta != 0 && event->rawDeltaH == 0)
+            LOG_INFO("DIAG DroneHotbar wheel: raw=%d -> rejected: not in drone", (int)event->rawDelta);
+        else if (event->rawDeltaH != 0)
+            LOG_INFO("DIAG DroneHotbar wheel: rawH=%d -> rejected: horizontal wheel", (int)event->rawDeltaH);
+
         // While a loader window has capture the game is not getting the wheel
         // anyway. A horizontal wheel and a wheel without Ctrl are not ours, and
         // a menu open on the game's layer owns the wheel.
@@ -79,6 +96,22 @@ namespace
         // one (the minimap zoom) also sees the notch.
         g_pendingRawDelta.fetch_add(event->rawDelta, std::memory_order_relaxed);
         return true;
+    }
+
+    // DIAG: the weapon component's equipped item and unarmed flag, read through
+    // fields BetterDrone already maps, before and after a cycle call.
+    void DiagWeaponState(const char* when, uint8_t direction)
+    {
+        SDK::ACrPlayerControllerBase* pc = LocalPlayerController();
+        SDK::ACrCharacterPlayerBase* character = DroneFields::ValueOr(DroneFields::CrChar, pc);
+        SDK::UCrWeaponComponent* weapons = DroneFields::ValueOr(DroneFields::WeaponSystem, character);
+        const auto* equipped = DroneFields::EquippedWeapon.In(weapons);
+        SDK::UAuWeaponItemDataBase* item = DroneFields::ValueOr(DroneFields::EquippedItemData, equipped);
+        LOG_INFO("DIAG DroneHotbar cycle %s dir=%d: equipped item=%s class=%s unarmed=%d",
+            when, (int)direction,
+            item ? item->GetName().c_str() : "none",
+            item && item->Class ? item->Class->GetName().c_str() : "none",
+            (int)DroneFields::ValueOr(DroneFields::LastEquippedUnarmed, weapons, false));
     }
 
     void OnTick(float deltaTime)
@@ -110,13 +143,17 @@ namespace
             return;
         }
 
+        LOG_INFO("DIAG DroneHotbar tick: %d notch(es), %s", (int)(std::abs(g_rawRemainder) / kRawPerNotch),  // DIAG
+            g_rawRemainder > 0 ? "forward" : "back");
         for (int32_t cycles = 0; cycles < kMaxCyclesPerTick && std::abs(g_rawRemainder) >= kRawPerNotch; ++cycles)
         {
             const bool forward = g_rawRemainder > 0;
             g_rawRemainder += forward ? -kRawPerNotch : kRawPerNotch;
 
             const uint8_t direction = forward ? kForwardCycle : kBackCycle;
+            DiagWeaponState("before", direction);  // DIAG
             g_cycleWeapon(character, direction);
+            DiagWeaponState("after", direction);  // DIAG
         }
     }
 }
