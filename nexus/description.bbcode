@@ -38,14 +38,14 @@ Warning indicators are automatically adjusted to match your configured limits.
 
 [size=4][b]The BetterDrone panel ✦[/b][/size]
 
-A slider, a number box and a reset arrow for each row: Drone Speed, Acceleration, Deceleration, Boost Multiplier, Max Radius, Max Height, Drone Size, plus a collapsed Audio section (Master sets the rest). [b]Esc[/b] or [b]Q[/b] closes it. Game sessions only.
+A slider, a number box and a reset arrow for each row: Drone Speed, Acceleration, Deceleration, Boost Multiplier, Slow Multiplier, Max Radius, Max Height, Drone Size, plus a collapsed Audio section (Master sets the rest). [b]Esc[/b] or [b]Q[/b] closes it. Game sessions only.
 
 [img]https://raw.githubusercontent.com/{{REPO}}/{{TAG}}/images/panel.png[/img]
 
 [list]
 [*][b]Speed Display Unit[/b] — km/h (default), mph or cm/s. Sets the speed, acceleration and range rows, the toast, the speedometer and the HUD's distance and height readouts (feet with mph, metres otherwise). ✦
 [*][b]Speedometer[/b] — the drone's speed under the HUD's distance readout, its number lined up with the distance digits; the HUD ring stays centred on the crosshair as the distance and height change. On by default. ✦
-[*][b]Saved presets[/b] — save, rename and delete your own for speed and range. Built-in names are reserved.
+[*][b]Saved presets[/b] — save, rename and delete your own for speed and range. Saving with a saved preset selected asks "You're saving over <name>. Continue?" and overwrites it; otherwise Save adds a new entry. Built-in names are reserved.
 [*][b]Speed presets[/b] (speed cm/s, boost, accel/decel cm/s²) — Stock game's own (400), 2x, 4000 · Better Construction 2500, 2.5x, 5000 · Agile Builder 4000, 3x, 10000 · Long Haul 5000, 3x, 12000 · Ludicrous Speed 8000, 4x, 20000
 [*][b]Range presets[/b] (max radius / max height cm) — Stock game's own (4000 / 3500) · Better Construction 10000 / 5000 · Agile Builder 20000 / 10000 · Map-wide 1000000 / 500000
 [/list]
@@ -55,6 +55,10 @@ Stock uses the game's own speed and range. Better Construction and Map-wide foll
 [size=4][b]Boost ✦[/b][/size]
 
 Hold the boost key (your game's Sprint key by default, rebinds included; rebindable on the ModLoader config page, Controls) to multiply speed by Boost Multiplier (1 to 10x, default 2x), up to 20000 cm/s. Acceleration and deceleration ramp it on and off.
+
+[size=4][b]Slow ✦[/b][/size]
+
+Hold the slow key ([b]Left Ctrl[/b] by default; rebindable on the ModLoader config page, Controls) to creep: the drone flies at Slow Multiplier (0.05 to 1x, default 0.25x) of your speed, eased in and out like Boost. Hold Slow and Boost together and Slow wins.
 
 [size=4][b]Preset hotkeys and toast ✦[/b][/size]
 
@@ -66,11 +70,14 @@ While the drone is out, [b]-[/b] and [b]=[/b] (rebindable on the ModLoader confi
 
 Look at a building and press [b]E[/b] (rebindable on the ModLoader config page, Interaction) to open its UI, as you would on foot. Also works in delete mode, and gathers wild plants, fruit and eggs (host and single player only).
 
+Hold the game's context interact key ([b]E[/b] by default, rebinds included) on a building or a logistics drone for as long as the game asks you to on foot, and it takes everything the target holds, as holding it does on foot. A short press stays the plain interact. ✦
+
 [size=4][b]The map from the drone ✦[/b][/size]
 
 [list]
 [*][b]Open it[/b] — press [b]M[/b] (rebindable on the ModLoader config page, Interaction) while you fly. It never opens over another menu.
 [*][b]Marker[/b] — the drone gets its own, a small reticle in your player-arrow colour that turns with the drone. The game's arrow stays at your parked body.
+[*][b]Follow[/b] — the map opens centred on the drone and keeps it centred as you fly. Zoom as usual; pan by hand to stop, and reopen the map to follow again. Recalling the drone puts the map back on your character, unless you moved it. No setting.
 [*][b]Drone Reveals Map[/b] — off by default. Uncovers the map as you fly, at the walking radius and spacing. Saved with your game. Not inside the Forgotten Engine.
 [/list]
 
@@ -88,6 +95,10 @@ Hold [b]G[/b] (rebindable on the ModLoader config page, Controls) while flying t
 [*][b]Vent[/b] — press your Reload key (R unless rebound) in the drone to vent the heat as the mining tool's R does: the vent takes 0.04 s per stack, plus 4 s when overheated (8 s from a full, overheated laser), the stacks coming off evenly, and the overheat ends with the last one. It does nothing with no heat or while firing, and firing stops a vent that is not overheated. The vent is silent.
 [*][b]Drill[/b] — its heat is read, never changed. BetterCheats' Mining Damage, Range, Hit Rate and Overheat Cooldown rows apply.
 [/list]
+
+[size=4][b]System voice from the drone[/b][/size]
+
+Rupture warnings and other spoken lines play from your parked body, so they fade as the drone flies away. While the drone is out, the distance falloff on the settings the game plays them with is turned off, so they stay audible far from your body, and put back when you recall the drone. The game has one such setting for first person and one for third person, and other players' characters may share the third-person one. So when other players are in the game, that one is left alone and the voice may still fade when the drone is far out. No setting.
 
 [size=4][b]Floor guard[/b][/size]
 
@@ -123,6 +134,7 @@ The file is generated on first launch. Edit it in game on the ModLoader config p
 [*]Drone Reveals Map — false
 [*]Toggle Key — F10
 [*]Boost Key — Sprint (follows your Sprint key)
+[*]Slow Key — LeftControl
 [*]Previous Preset Key — Hyphen
 [*]Next Preset Key — Equals
 [*]Mining Laser Key — G
@@ -136,6 +148,7 @@ Panel values are saved to [i]"Plugins\config\BetterDrone-Panel.ini"[/i], clamped
 [*]MaxHeight — vertical range (100 to 500000 cm, default the game's own, 3500)
 [*]SphereRadius — Drone Size, collision radius (20 to 50 cm, default 50)
 [*]BoostMultiplier — 1 to 10, default 2
+[*]SlowMultiplier — 0.05 to 1, default 0.25
 [*]Acceleration, Deceleration — 4000 to 50000 cm/s², default 4000
 [*]IdleVolume, MovementVolume, RotationVolume, StationVolume — 0 to 1, default 1
 [*]SpeedUnit — km/h, mph or cm/s
