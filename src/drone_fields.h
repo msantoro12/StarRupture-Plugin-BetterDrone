@@ -248,6 +248,7 @@ namespace DroneFields
 		inline constexpr const char* UncoverFog         = "UCrMapManuSubsystem::UncoverFogOfWar";
 		inline constexpr const char* CancelTool         = "ACrCharacterPlayerBase::NativeOnWeaponCancelTool";
 		inline constexpr const char* CycleWeapon        = "ACrCharacterPlayerBase::NativeOnCycleWeapon";
+		inline constexpr const char* ProcessEvent       = "UObject::ProcessEvent";  // DIAG
 		inline constexpr const char* HandleDeactivate   = "UCrUW_ActivatableWidget::HandleDeactivate";
 		inline constexpr const char* CanDroneBeActive   = "ACrCharacterPlayerBase::CanBuildingDroneBeActive";
 		inline constexpr const char* CheckIfInInterior  = "ACrCharacterPlayerBase::CheckIfInInterior";

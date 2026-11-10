@@ -4,9 +4,15 @@
 #include "plugin_helpers.h"
 #include <Chimera_classes.hpp>
 #include <Engine_classes.hpp>
+#include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace
 {
@@ -62,10 +68,110 @@ namespace
     int32_t g_rawRemainder = 0;
     float   g_remainderAge = 0.0f;
 
+    // DIAG: capture of what the game calls when the hotbar switches on foot.
+    // A window opens for kDiagWindowMs after any vertical wheel notch or a
+    // press of the number keys 1-9; while it is open a UObject::ProcessEvent
+    // observer logs the hotbar-related functions the game runs. Outside the
+    // window the observer costs one clock read.
+    constexpr int64_t kDiagWindowMs = 1500;
+    constexpr int32_t kDiagMaxLines = 600;
+
+    using ProcessEvent_t = void(__fastcall*)(void* obj, void* fn, void* params);
+    ProcessEvent_t g_origProcessEvent = nullptr;
+    HookHandle     g_hookProcessEvent = nullptr;
+    uintptr_t      g_addrProcessEvent = 0;
+
+    using CycleWeaponHook_t = void(__fastcall*)(SDK::ACrCharacterPlayerBase*, uint8_t);
+    CycleWeaponHook_t g_origCycleWeapon = nullptr;
+    HookHandle        g_hookCycleWeapon = nullptr;
+    bool              g_ownCycleCall    = false;  // game thread only
+
+    std::atomic<int64_t>  g_diagWindowEndMs{ 0 };
+    std::atomic<uint32_t> g_diagSeq{ 0 };
+
+    struct DiagFn { bool match; std::string text; };
+    std::mutex g_diagMutex;
+    std::unordered_map<const void*, DiagFn> g_diagFns;  // UFunction* -> verdict, guarded by g_diagMutex
+    int32_t g_diagLines = 0;                            // guarded by g_diagMutex
+
+    int64_t DiagNowMs()
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    void DiagOpenWindow(const char* why)
+    {
+        const int64_t now = DiagNowMs();
+        if (g_diagWindowEndMs.load(std::memory_order_relaxed) <= now)
+        {
+            std::lock_guard<std::mutex> lock(g_diagMutex);
+            g_diagFns.clear();
+            g_diagLines = 0;
+            LOG_INFO("DIAG hotbar capture window open (%s) drone=%d", why, (int)g_inDrone.load(std::memory_order_relaxed));
+        }
+        g_diagWindowEndMs.store(now + kDiagWindowMs, std::memory_order_relaxed);
+    }
+
+    bool DiagNameMatches(const std::string& name)
+    {
+        std::string lower(name);
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        static const char* const kWords[] = { "hotbar", "weapon", "equip", "slot", "cycle", "inventory", "quickuse", "item" };
+        for (const char* word : kWords)
+            if (lower.find(word) != std::string::npos)
+                return true;
+        return false;
+    }
+
+    void __fastcall Detour_ProcessEvent(void* obj, void* fn, void* params)
+    {
+        if (obj && fn && g_diagWindowEndMs.load(std::memory_order_relaxed) > DiagNowMs())
+        {
+            std::lock_guard<std::mutex> lock(g_diagMutex);
+            auto it = g_diagFns.find(fn);
+            if (it == g_diagFns.end())
+            {
+                const auto* func = static_cast<const SDK::UFunction*>(fn);
+                const std::string name = func->GetName();
+                const std::string owner = func->Outer ? func->Outer->GetName() : std::string("?");
+                it = g_diagFns.emplace(fn, DiagFn{ DiagNameMatches(name) || DiagNameMatches(owner), owner + "::" + name }).first;
+            }
+            if (it->second.match && g_diagLines < kDiagMaxLines)
+            {
+                ++g_diagLines;
+                const auto* object = static_cast<const SDK::UObject*>(obj);
+                LOG_INFO("DIAG PE #%u: %s on %s drone=%d", g_diagSeq.fetch_add(1, std::memory_order_relaxed) + 1,
+                    it->second.text.c_str(), object->Class ? object->Class->GetName().c_str() : "?",
+                    (int)g_inDrone.load(std::memory_order_relaxed));
+            }
+        }
+
+        g_origProcessEvent(obj, fn, params);
+    }
+
+    // The game's next-weapon and previous-weapon inputs call this; so does
+    // this plugin's Ctrl + wheel, flagged as "plugin".
+    void __fastcall Detour_NativeOnCycleWeapon(SDK::ACrCharacterPlayerBase* character, uint8_t direction)
+    {
+        LOG_INFO("DIAG NativeOnCycleWeapon #%u: dir=%d source=%s drone=%d",
+            g_diagSeq.fetch_add(1, std::memory_order_relaxed) + 1, (int)direction,
+            g_ownCycleCall ? "plugin" : "game", (int)g_inDrone.load(std::memory_order_relaxed));
+        g_origCycleWeapon(character, direction);
+    }
+
+    void OnDiagNumberKey(EModKey, EModKeyEvent)
+    {
+        DiagOpenWindow("number key");
+    }
+
     bool OnMouseWheel(const PluginMouseWheelEvent* event, void*)
     {
         if (!event || event->size < sizeof(PluginMouseWheelEvent))
             return false;
+
+        if (event->rawDelta != 0 && event->rawDeltaH == 0)
+            DiagOpenWindow("wheel");  // DIAG
 
         // DIAG: say which gate rejected each vertical notch while in the drone.
         if (event->rawDelta != 0 && event->rawDeltaH == 0 && g_inDrone.load(std::memory_order_relaxed))
@@ -152,7 +258,9 @@ namespace
 
             const uint8_t direction = forward ? kForwardCycle : kBackCycle;
             DiagWeaponState("before", direction);  // DIAG
+            g_ownCycleCall = true;  // DIAG
             g_cycleWeapon(character, direction);
+            g_ownCycleCall = false;  // DIAG
             DiagWeaponState("after", direction);  // DIAG
         }
     }
@@ -166,6 +274,9 @@ void ResolveDroneHotbar(IPluginSelf* self, IPluginHookScanner* scanner)
     g_cycleWeapon = PluginMap::FunctionAs<CycleWeapon_t>(scanner, self, DroneFields::Keys::CycleWeapon,
         PLUGIN_MAP_PATTERN(kCycleWeaponPattern), PLUGIN_SCAN_FUNCTION_START,
         PLUGIN_SCAN_FLAG_OPTIONAL | PLUGIN_SCAN_FLAG_FOLLOW_REL32, 0, kCycleWeaponCallAt);
+
+    // DIAG: the loader's map row for UObject::ProcessEvent, for the observer.
+    g_addrProcessEvent = DroneFields::ResolveFunction(self, scanner, DroneFields::Keys::ProcessEvent, nullptr);
 }
 
 bool InitDroneHotbar(IPluginSelf* self)
@@ -180,6 +291,22 @@ bool InitDroneHotbar(IPluginSelf* self)
     input->RegisterMouseWheel(&OnMouseWheel, nullptr);
     self->hooks->Engine->RegisterOnTick(OnTick);
 
+    // DIAG: the number-key trigger, the ProcessEvent observer and the cycle detour.
+    for (EModKey key = EModKey::One; key <= EModKey::Nine; key = static_cast<EModKey>(static_cast<uint32_t>(key) + 1))
+        input->RegisterKeybind(key, EModKeyEvent::Pressed, &OnDiagNumberKey);
+    if (g_addrProcessEvent)
+    {
+        g_hookProcessEvent = self->hooks->Hooks->Install(g_addrProcessEvent,
+            reinterpret_cast<void*>(&Detour_ProcessEvent), reinterpret_cast<void**>(&g_origProcessEvent));
+        LOG_INFO("DIAG ProcessEvent observer at 0x%llX: %s", (unsigned long long)g_addrProcessEvent,
+            g_hookProcessEvent ? "installed" : "install failed");
+    }
+    else
+        LOG_INFO("DIAG ProcessEvent observer: the loader's map has no UObject::ProcessEvent row");
+    g_hookCycleWeapon = self->hooks->Hooks->Install(reinterpret_cast<uintptr_t>(g_cycleWeapon),
+        reinterpret_cast<void*>(&Detour_NativeOnCycleWeapon), reinterpret_cast<void**>(&g_origCycleWeapon));
+    LOG_INFO("DIAG NativeOnCycleWeapon detour: %s", g_hookCycleWeapon ? "installed" : "install failed");
+
     LOG_INFO("DroneHotbar: Ctrl + mouse wheel changes the hotbar in drone mode");
     return true;
 }
@@ -192,6 +319,18 @@ void ShutdownDroneHotbar(IPluginSelf* self)
     if (self->hooks->Input && self->hooks->Input->UnregisterMouseWheel)
         self->hooks->Input->UnregisterMouseWheel(&OnMouseWheel, nullptr);
     self->hooks->Engine->UnregisterOnTick(OnTick);
+
+    // DIAG
+    if (g_hookProcessEvent)
+        self->hooks->Hooks->Remove(g_hookProcessEvent);
+    if (g_hookCycleWeapon)
+        self->hooks->Hooks->Remove(g_hookCycleWeapon);
+    g_hookProcessEvent = nullptr;
+    g_hookCycleWeapon = nullptr;
+    g_diagWindowEndMs.store(0, std::memory_order_relaxed);
+    if (self->hooks->Input && self->hooks->Input->UnregisterKeybind)
+        for (EModKey key = EModKey::One; key <= EModKey::Nine; key = static_cast<EModKey>(static_cast<uint32_t>(key) + 1))
+            self->hooks->Input->UnregisterKeybind(key, EModKeyEvent::Pressed, &OnDiagNumberKey);
 
     g_inDrone.store(false, std::memory_order_relaxed);
     g_pendingRawDelta.store(0, std::memory_order_relaxed);
