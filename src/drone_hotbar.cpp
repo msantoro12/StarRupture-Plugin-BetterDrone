@@ -9,10 +9,12 @@
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace
 {
@@ -71,10 +73,13 @@ namespace
     // DIAG: capture of what the game calls when the hotbar switches on foot.
     // A window opens for kDiagWindowMs after any vertical wheel notch or a
     // press of the number keys 1-9; while it is open a UObject::ProcessEvent
-    // observer logs the hotbar-related functions the game runs. Outside the
-    // window the observer costs one clock read.
+    // observer counts the hotbar-related functions the game runs, one entry per
+    // distinct "Owner::Func on ObjClass". When the window closes (OnTick) it
+    // logs one summary line per entry, in first-seen order, tagged with the
+    // trigger that opened it. Functions with hotbar, slot, equip or
+    // activeweapon in the name also log a line the first time they are seen in
+    // a window. Outside the window the observer costs one clock read.
     constexpr int64_t kDiagWindowMs = 1500;
-    constexpr int32_t kDiagMaxLines = 600;
 
     using ProcessEvent_t = void(__fastcall*)(void* obj, void* fn, void* params);
     ProcessEvent_t g_origProcessEvent = nullptr;
@@ -89,10 +94,14 @@ namespace
     std::atomic<int64_t>  g_diagWindowEndMs{ 0 };
     std::atomic<uint32_t> g_diagSeq{ 0 };
 
-    struct DiagFn { bool match; std::string text; };
+    struct DiagFn { bool match; bool key; std::string text; };
+    struct DiagEntry { std::string text; uint32_t count; };
     std::mutex g_diagMutex;
-    std::unordered_map<const void*, DiagFn> g_diagFns;  // UFunction* -> verdict, guarded by g_diagMutex
-    int32_t g_diagLines = 0;                            // guarded by g_diagMutex
+    std::unordered_map<const void*, DiagFn> g_diagFns;    // UFunction* -> verdict, guarded by g_diagMutex
+    std::vector<DiagEntry> g_diagEntries;                 // first-seen order, guarded by g_diagMutex
+    std::unordered_map<std::string, size_t> g_diagIndex;  // entry text -> index in g_diagEntries, guarded by g_diagMutex
+    std::string g_diagTrigger;                            // what opened the window, guarded by g_diagMutex
+    bool g_diagOpen = false;                              // guarded by g_diagMutex
 
     int64_t DiagNowMs()
     {
@@ -106,11 +115,43 @@ namespace
         if (g_diagWindowEndMs.load(std::memory_order_relaxed) <= now)
         {
             std::lock_guard<std::mutex> lock(g_diagMutex);
-            g_diagFns.clear();
-            g_diagLines = 0;
+            g_diagEntries.clear();
+            g_diagIndex.clear();
+            g_diagTrigger = why;
+            g_diagOpen = true;
             LOG_INFO("DIAG hotbar capture window open (%s) drone=%d", why, (int)g_inDrone.load(std::memory_order_relaxed));
         }
         g_diagWindowEndMs.store(now + kDiagWindowMs, std::memory_order_relaxed);
+    }
+
+    // Logs the counted entries of a window that has closed, or of one cut
+    // short by shutdown (force). Game thread (OnTick) or the shutdown path.
+    void DiagFlushWindow(bool force)
+    {
+        if (!force && g_diagWindowEndMs.load(std::memory_order_relaxed) > DiagNowMs())
+            return;
+        std::lock_guard<std::mutex> lock(g_diagMutex);
+        if (!g_diagOpen)
+            return;
+        g_diagOpen = false;
+        LOG_INFO("DIAG hotbar capture window closed (%s): %u distinct", g_diagTrigger.c_str(), (unsigned)g_diagEntries.size());
+        for (const DiagEntry& entry : g_diagEntries)
+            LOG_INFO("DIAG [%s] %ux %s", g_diagTrigger.c_str(), (unsigned)entry.count, entry.text.c_str());
+        g_diagEntries.clear();
+        g_diagIndex.clear();
+    }
+
+    // Function names whose first call in a window is logged on its own, so the
+    // order of the key calls is visible.
+    bool DiagIsKeyName(const std::string& name)
+    {
+        std::string lower(name);
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        static const char* const kWords[] = { "hotbar", "slot", "equip", "activeweapon" };
+        for (const char* word : kWords)
+            if (lower.find(word) != std::string::npos)
+                return true;
+        return false;
     }
 
     bool DiagNameMatches(const std::string& name)
@@ -135,15 +176,24 @@ namespace
                 const auto* func = static_cast<const SDK::UFunction*>(fn);
                 const std::string name = func->GetName();
                 const std::string owner = func->Outer ? func->Outer->GetName() : std::string("?");
-                it = g_diagFns.emplace(fn, DiagFn{ DiagNameMatches(name) || DiagNameMatches(owner), owner + "::" + name }).first;
+                it = g_diagFns.emplace(fn, DiagFn{ DiagNameMatches(name) || DiagNameMatches(owner), DiagIsKeyName(name), owner + "::" + name }).first;
             }
-            if (it->second.match && g_diagLines < kDiagMaxLines)
+            if (it->second.match && g_diagOpen)
             {
-                ++g_diagLines;
                 const auto* object = static_cast<const SDK::UObject*>(obj);
-                LOG_INFO("DIAG PE #%u: %s on %s drone=%d", g_diagSeq.fetch_add(1, std::memory_order_relaxed) + 1,
-                    it->second.text.c_str(), object->Class ? object->Class->GetName().c_str() : "?",
-                    (int)g_inDrone.load(std::memory_order_relaxed));
+                const std::string text = it->second.text + " on " + (object->Class ? object->Class->GetName() : std::string("?"))
+                    + " drone=" + std::to_string((int)g_inDrone.load(std::memory_order_relaxed));
+                const auto found = g_diagIndex.find(text);
+                if (found != g_diagIndex.end())
+                    ++g_diagEntries[found->second].count;
+                else
+                {
+                    g_diagIndex.emplace(text, g_diagEntries.size());
+                    g_diagEntries.push_back(DiagEntry{ text, 1 });
+                    if (it->second.key)
+                        LOG_INFO("DIAG first call #%u [%s]: %s", g_diagSeq.fetch_add(1, std::memory_order_relaxed) + 1,
+                            g_diagTrigger.c_str(), text.c_str());
+                }
             }
         }
 
@@ -160,9 +210,11 @@ namespace
         g_origCycleWeapon(character, direction);
     }
 
-    void OnDiagNumberKey(EModKey, EModKeyEvent)
+    void OnDiagNumberKey(EModKey key, EModKeyEvent)
     {
-        DiagOpenWindow("number key");
+        char why[16];
+        snprintf(why, sizeof(why), "key %d", (int)key - (int)EModKey::One + 1);
+        DiagOpenWindow(why);
     }
 
     bool OnMouseWheel(const PluginMouseWheelEvent* event, void*)
@@ -171,7 +223,13 @@ namespace
             return false;
 
         if (event->rawDelta != 0 && event->rawDeltaH == 0)
-            DiagOpenWindow("wheel");  // DIAG
+        {
+            const char* mods = (event->modifiers & PluginWheelMod_Ctrl) ? "ctrl"
+                : (event->modifiers & (PluginWheelMod_LeftAlt | PluginWheelMod_RightAlt)) ? "alt" : "none";
+            char why[48];
+            snprintf(why, sizeof(why), "wheel mods=%s dir=%s", mods, event->rawDelta > 0 ? "forward" : "back");
+            DiagOpenWindow(why);  // DIAG
+        }
 
         // DIAG: say which gate rejected each vertical notch while in the drone.
         if (event->rawDelta != 0 && event->rawDeltaH == 0 && g_inDrone.load(std::memory_order_relaxed))
@@ -222,6 +280,8 @@ namespace
 
     void OnTick(float deltaTime)
     {
+        DiagFlushWindow(false);  // DIAG
+
         const bool inDrone = IsLocalPlayerInDrone();
         g_inDrone.store(inDrone, std::memory_order_relaxed);
 
@@ -327,6 +387,7 @@ void ShutdownDroneHotbar(IPluginSelf* self)
         self->hooks->Hooks->Remove(g_hookCycleWeapon);
     g_hookProcessEvent = nullptr;
     g_hookCycleWeapon = nullptr;
+    DiagFlushWindow(true);
     g_diagWindowEndMs.store(0, std::memory_order_relaxed);
     if (self->hooks->Input && self->hooks->Input->UnregisterKeybind)
         for (EModKey key = EModKey::One; key <= EModKey::Nine; key = static_cast<EModKey>(static_cast<uint32_t>(key) + 1))
