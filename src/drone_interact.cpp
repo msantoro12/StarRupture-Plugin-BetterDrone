@@ -1,5 +1,6 @@
 #include "drone_interact.h"
 #include "drone_config.h"
+#include "drone_esc_pause.h"
 #include "drone_fields.h"
 #include "drone_key_vk.h"
 #include "drone_sprint_key.h"
@@ -1054,6 +1055,11 @@ namespace
             reinterpret_cast<HandleDeactivate_t>(g_addrHandleDeactivate)(menu);
             return;
         }
+
+        // Esc with "Esc Opens Pause Menu In Drone Mode" on opens the pause
+        // menu instead, when this cancel is that press.
+        if (DroneEscPauseTakeCancel(character))
+            return;
 
         g_origCancelTool(character);
     }

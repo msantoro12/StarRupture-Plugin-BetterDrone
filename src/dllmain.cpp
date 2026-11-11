@@ -4,6 +4,7 @@
 #include "drone_interact.h"
 #include "drone_wave_patch.h"
 #include "drone_audio.h"
+#include "drone_esc_pause.h"
 #include "drone_body_anchor.h"
 #include "drone_floor_guard.h"
 #include "drone_hotbar.h"
@@ -184,6 +185,7 @@ extern "C" __declspec(dllexport) void OnPluginLoadHooks(IPluginSelf* self, IPlug
     ResolveDroneMapFollow(self, scanner);
     ResolveDroneFog(self, scanner);
     ResolveDroneBuildMenu(self, scanner);
+    ResolveDroneEscPause(self, scanner);
     ResolveDroneLaser(self, scanner);
     DroneFields::Resolve(self, scanner);
 }
@@ -231,6 +233,8 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
         InitDroneFog();
     if (DroneFields::Features::BuildMenu.On())
         InitDroneBuildMenu();
+    if (DroneFields::Features::EscPause.On())
+        InitDroneEscPause(self);
     if (DroneFields::Features::Limits.On())
     {
         RegisterBoostKey(self);
@@ -268,6 +272,8 @@ extern "C" __declspec(dllexport) void PluginShutdown()
         ShutdownDroneFog();
     if (DroneFields::Features::BuildMenu.On())
         ShutdownDroneBuildMenu();
+    if (DroneFields::Features::EscPause.On())
+        ShutdownDroneEscPause(g_self);
     ShutdownWavePatch();
     if (DroneFields::Features::Audio.On())
         DroneAudio::Shutdown();

@@ -397,6 +397,7 @@ namespace DroneConfig
             { "Interaction", "Map In Drone Mode",      ConfigValueType::Boolean, "true",      "Opens the map from the drone.", 0.0f, 1.0f },
             { "Interaction", "Map Key",                ConfigValueType::Keybind, "M",         "Key that opens the map while the drone is out. Set it to the game's own map key.", 0.0f, 0.0f },
             { "Interaction", "Map Centre Key",         ConfigValueType::Keybind, "C",         "Key that switches the open map between your character and the drone while the drone is out. Set it to the game's own Center on player key.", 0.0f, 0.0f },
+            { "Interaction", "Esc Opens Pause Menu In Drone Mode", ConfigValueType::Boolean, "false", "Esc opens the pause menu while you fly the drone, and you stay in the drone when it closes. Off: Esc recalls the drone. Q still recalls it either way. Esc while placing a building is unchanged.", 0.0f, 1.0f },
             { "Interaction", "Drone Reveals Map",      ConfigValueType::Boolean, "false",     "Flying the drone uncovers the map the way walking does. What it uncovers is saved with your game.", 0.0f, 1.0f },
             // Matches BetterCheats' own ToggleKey default on purpose, so one
             // F10 press opens both panels. The loader dispatches a keypress
@@ -441,6 +442,11 @@ namespace DroneConfig
     bool Config::ReadMapInDroneMode()
     {
         return s_self ? s_self->config->ReadBool(s_self, "Interaction", "Map In Drone Mode", true) : false;
+    }
+
+    bool Config::ReadEscPauseInDrone()
+    {
+        return s_self ? s_self->config->ReadBool(s_self, "Interaction", "Esc Opens Pause Menu In Drone Mode", false) : false;
     }
 
     bool Config::ReadDroneRevealsMap()
