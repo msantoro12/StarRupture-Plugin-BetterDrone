@@ -104,6 +104,11 @@ namespace PanelSettings
           // kMinAccelDecel) rather than 0, which no longer means instant.
           kGameValue, 2.0f, 4000.0f, 4000.0f },
 
+        { "Light Construction",
+          "Halfway between Stock and Better Construction -- a gentle boost with quick acceleration.",
+          nullptr,
+          1450.0f, 2.25f, 4500.0f, 4500.0f },
+
         { "Better Construction",
           "Modelled on 'Better Construction Drone' by CrazyCovin -- 2.5x speed & fast acceleration.",
           "Modelled on NexusMod #27 by CrazyCovin",

@@ -27,6 +27,7 @@ Opens with **F10** (rebindable on the loader's Config page, Controls), the **BET
 | Preset | Speed (cm/s) | Boost | Accel / decel (cm/s²) | Max Radius (cm) | Max Height (cm) |
 |---|---|---|---|---|---|
 | Stock | game's own (400) | 2x | 4000 | game's own (4000) | game's own (3500) |
+| Light Construction | 1450 | 2.25x | 4500 | | |
 | Better Construction | 2500 | 2.5x | 5000 | 10000 | 5000 |
 | Agile Builder | 4000 | 3x | 10000 | 20000 | 10000 |
 | Long Haul | 5000 | 3x | 12000 | | |

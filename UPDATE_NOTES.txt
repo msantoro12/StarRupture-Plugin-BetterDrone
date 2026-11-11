@@ -14,3 +14,4 @@
 - Press C (rebindable) on the map in the drone to switch between your character and the drone
 - Ctrl + mouse wheel switches your hotbar page while the drone is out, on game versions that have hotbar pages. Ctrl is also the default Slow key, so the drone slows while you scroll; rebind Slow Key on the Config page if you prefer
 - New option Esc Opens Pause Menu In Drone Mode (off by default): Esc opens the pause menu in the drone instead of recalling it; Q still recalls
+- New speed preset Light Construction (1450 cm/s, 2.25x boost), halfway between Stock and Better Construction
