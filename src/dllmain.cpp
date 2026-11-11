@@ -185,7 +185,6 @@ extern "C" __declspec(dllexport) void OnPluginLoadHooks(IPluginSelf* self, IPlug
     ResolveDroneFog(self, scanner);
     ResolveDroneBuildMenu(self, scanner);
     ResolveDroneLaser(self, scanner);
-    ResolveDroneHotbar(self, scanner);
     DroneFields::Resolve(self, scanner);
 }
 
@@ -222,7 +221,7 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     InitWavePatch(DroneFields::Features::AlwaysAllow.On(), DroneFields::Features::WaveShelter.On());
     if (DroneFields::Features::Interaction.On())
         InitDroneInteract();
-    if (DroneFields::Features::HotbarCycle.On())
+    if (DroneFields::Features::HotbarPage.On())
         InitDroneHotbar(self);
     if (DroneFields::Features::MapOpen.On())
         InitDroneMap();
@@ -261,7 +260,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
         ShutdownDroneLaser(g_self);
     if (DroneFields::Features::Interaction.On())
         ShutdownDroneInteract();
-    if (DroneFields::Features::HotbarCycle.On())
+    if (DroneFields::Features::HotbarPage.On())
         ShutdownDroneHotbar(g_self);
     if (DroneFields::Features::MapOpen.On())
         ShutdownDroneMap();

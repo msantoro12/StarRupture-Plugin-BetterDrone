@@ -32,6 +32,15 @@ struct MapAreaMatrixData
 	float m[4][4];
 };
 
+// The hotbar subsystem's pages: a native TArray (data pointer, Num, Max) of
+// 16-byte entries. Only Num is read, as the page count.
+struct HotbarArrayData
+{
+	void*   Data;
+	int32_t Num;
+	int32_t Max;
+};
+
 namespace DroneFields
 {
 	// The player character
@@ -95,6 +104,16 @@ namespace DroneFields
 	// map-follow feature is off.
 	inline auto MapAreaMatrix = PluginField<MapAreaMatrixData>{ { "UCrUW_MapMenuMapArea::MapAreaMatrix",
 		"UCrUW_MapMenuMapArea", "MapAreaMatrix", PLUGIN_FIELD_NATIVE, sizeof(MapAreaMatrixData), 0x500 } };
+
+	// The hotbar pages of the local player's UCrHotbarLocalPlayerSubsystem, which
+	// only game builds with hotbar pages have. Neither member is in the
+	// Game-SDK, so both are native: the loader's row for the running build, or
+	// the page switch is off. The current page is a byte at +0x48, the pages an
+	// array at +0x38 whose Num is at +0x40.
+	inline auto CurrentHotbarIndex = PluginField<uint8_t>{ { "UCrHotbarLocalPlayerSubsystem::CurrentHotbarIndex",
+		"UCrHotbarLocalPlayerSubsystem", "CurrentHotbarIndex", PLUGIN_FIELD_NATIVE, sizeof(uint8_t), 0x48 } };
+	inline auto Hotbars = PluginField<HotbarArrayData>{ { "UCrHotbarLocalPlayerSubsystem::Hotbars",
+		"UCrHotbarLocalPlayerSubsystem", "Hotbars", PLUGIN_FIELD_NATIVE, sizeof(HotbarArrayData), 0x38 } };
 
 	// Drone settings and the map's fog of war
 	inline auto SpeedPerSec   = DRONE_FIELD(UAuActorPlacementDeveloperSettings, BuildingDroneSpeedPerSec);
@@ -224,6 +243,7 @@ namespace DroneFields
 			WeakSpotResource, InventorySlots, SlotItemId, ItemIdHandle, OreMappingData, PhysMatOreDataMap,
 			MapDataHelper, BuildingsMarkers, BuildingsMarkerData, MarkerBuildingHandle, MarkerLocation,
 			MapMenuMapArea, MapMassMarkers, MapTerrain, MapCanvasPanel, MarkerWidget, MapPivotPoint, MapAreaMatrix,
+			CurrentHotbarIndex, Hotbars,
 			MarkerColorData, MarkerPlayerColour,
 			HudPlayerCharacter, HudDistanceT, HudDistanceH, HudDistanceD, HudDistanceU, HudDistanceM,
 			HudHeightT, HudHeightH, HudHeightD, HudHeightU, HudHeightM,
@@ -247,7 +267,6 @@ namespace DroneFields
 		inline constexpr const char* MapMenu            = "ACrPlayerControllerBase::NativeOnInputMapMenu";
 		inline constexpr const char* UncoverFog         = "UCrMapManuSubsystem::UncoverFogOfWar";
 		inline constexpr const char* CancelTool         = "ACrCharacterPlayerBase::NativeOnWeaponCancelTool";
-		inline constexpr const char* CycleWeapon        = "ACrCharacterPlayerBase::NativeOnCycleWeapon";
 		inline constexpr const char* HandleDeactivate   = "UCrUW_ActivatableWidget::HandleDeactivate";
 		inline constexpr const char* CanDroneBeActive   = "ACrCharacterPlayerBase::CanBuildingDroneBeActive";
 		inline constexpr const char* CheckIfInInterior  = "ACrCharacterPlayerBase::CheckIfInInterior";
@@ -318,11 +337,11 @@ namespace DroneFields
 				NativeInputActions, NativeInputAction, NativeInputHandler, NativeInputActionSize),
 			{} };
 
-		// Ctrl and the mouse wheel change the hotbar in the drone, through the
-		// game's own weapon-cycle call. A part of its own: a game build without
-		// the key loses only this.
-		inline PluginMap::Feature HotbarCycle{ "hotbar-cycle", "Ctrl + mouse wheel changes the hotbar in the drone",
-			PluginMap::KeysOf(Keys::CycleWeapon),
+		// Ctrl and the mouse wheel switch the hotbar page in the drone, through
+		// the game's own SetActiveHotbar. A part of its own: a game build without
+		// hotbar pages, or without the loader's rows for them, loses only this.
+		inline PluginMap::Feature HotbarPage{ "hotbar-page", "Ctrl + mouse wheel switches the hotbar page in the drone",
+			PluginMap::KeysOf(CurrentHotbarIndex, Hotbars),
 			{} };
 
 		inline PluginMap::Feature MapOpen{ "drone-map", "Open the map from the drone",
@@ -355,7 +374,7 @@ namespace DroneFields
 		{
 			return PluginMap::DeclareFeatures(scanner, self, MiningLaser, MapReveal, MapMarker, MapFollow, Limits, SprintKey,
 				Announcer,
-				AlwaysAllow, WaveShelter, Interaction, HoldTakeAll, HotbarCycle, MapOpen, BuildMenu, Speedometer, SpeedometerHeight, Audio);
+				AlwaysAllow, WaveShelter, Interaction, HoldTakeAll, HotbarPage, MapOpen, BuildMenu, Speedometer, SpeedometerHeight, Audio);
 		}
 	}
 
