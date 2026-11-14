@@ -58,13 +58,25 @@ Fly up to a building, look at it and press the interact key (**E**; rebindable o
 
 Hold the game's context interact key (**E** by default, rebinds included) on a building or a logistics drone for as long as the game asks you to on foot, and it takes everything the target holds, as holding it does on foot. A short press stays the plain interact. <sup>[✦](#msantoro12)</sup>
 
-### Esc opens the pause menu <sup>[✦](#msantoro12)</sup>
-
-Turn on `Esc Opens Pause Menu In Drone Mode` (off by default) and **Esc** in the drone opens the game's pause menu, and pauses as it does on foot, instead of recalling the drone. When the menu closes you are still in the drone, in the same spot. **Q** still recalls the drone, on or off. Esc while you are placing a building still leaves the drone as before. Keyboard Esc only.
-
 ### Hotbar page from the drone <sup>[✦](#msantoro12)</sup>
 
 Hold **Ctrl** and scroll the mouse wheel while the drone is out to switch your hotbar page, one page per notch, as Ctrl and the wheel do on foot. It changes the page only, never the slot or the tool in your hand, so the drone stays out. It needs a game version that has hotbar pages; on an older one Ctrl and the wheel are left to the game. The wheel is taken only while you fly, so Ctrl and the wheel work as before on foot, with a menu open or with a loader window open. Only the wheel is taken, so Ctrl itself still reaches the game and any key bound to it. Ctrl is also the default Slow key, so the drone slows while you scroll; rebind Slow Key on the Config page if you prefer. A mod that also uses Ctrl and the wheel, such as a minimap zoom, loses those notches while the drone is out if BetterDrone loads before it.
+
+### Hotbar slots from the drone <sup>[✦](#msantoro12)</sup>
+
+While the drone is out, the number keys **1** to **9** and **0** pick slots 1 to 10 of your current hotbar page, as they do on foot, and the mouse wheel (no Ctrl) steps to the next or previous slot, wrapping around the page. Only building slots are picked, and the building goes into your hand ready to place while the drone stays out. Weapon, consumable and empty slots are skipped: a weapon would end the drone and a consumable would be used on your parked character. While it is taken, the wheel does nothing else, even with a building in hand. It is taken only on a page that has a building slot, so it works as before on any other page, on foot, with a menu open or with a loader window open. Ctrl and the wheel still switch the page. It needs a game version that has hotbar pages; on an older one the keys and the wheel are left to the game.
+
+The same wheel pick works on foot with the building tool out, in build mode (with or without a building in hand) and in delete mode: the plain wheel steps to the next or previous building slot, with the same rules as in the drone. In delete mode, picking a building equips the building tool and starts placing it, so you leave delete mode. In build mode the plain wheel normally raises and lowers the building you are placing and adjusts a spline's tangent. The pick replaces that while it is taken, on a page that has a building slot, and the wheel does nothing else then, even with a building in hand.
+
+If you would rather keep those, change `kOnFootWheelModifier` in `src/drone_hotbar.cpp` to `PluginWheelMod_Alt` and rebuild, and the on-foot pick moves to Alt + wheel. Outside build and delete mode the wheel is the game's (it cycles weapons), Ctrl and the wheel still switch the page on foot as the game does, and the number keys on foot are the game's own.
+
+### Esc opens the pause menu <sup>[✦](#msantoro12)</sup>
+
+Turn on `Esc Opens Pause Menu In Drone Mode` (off by default) and **Esc** in the drone opens the game's pause menu, and pauses as it does on foot, instead of recalling the drone. When the menu closes you are still in the drone, in the same spot. **Q** still recalls the drone, on or off. Keyboard Esc only.
+
+### Cancelling a placement keeps the drone <sup>[✦](#msantoro12)</sup>
+
+While you fly with a new building in hand, **Q** or **B** (the game's cancel key) ends the placement and you stay in the drone, where the game would have ended the drone with the tool. If you are moving an existing building, the same key still snaps it back to where it was. **Q** with nothing in hand still returns you to your character. It needs the loader's version object map to have an entry for the game version (the version map); without it the game's own behaviour is kept.
 
 ### The map from the drone <sup>[✦](#msantoro12)</sup>
 

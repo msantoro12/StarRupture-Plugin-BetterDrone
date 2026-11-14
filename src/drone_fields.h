@@ -32,8 +32,8 @@ struct MapAreaMatrixData
 	float m[4][4];
 };
 
-// The hotbar subsystem's pages: a native TArray (data pointer, Num, Max) of
-// 16-byte entries. Only Num is read, as the page count.
+// A native TArray header (data pointer, Num, Max): the hotbar subsystem's pages
+// (read for Num and the entries) and one page's slots.
 struct HotbarArrayData
 {
 	void*   Data;
@@ -79,6 +79,24 @@ namespace DroneFields
 		"ACrPlayerControllerBase", "PlayerControlState", PLUGIN_FIELD_NATIVE, sizeof(uint8_t), 0xE88 } };
 	inline auto BuildingMenuPlayer = DRONE_FIELD(UCrUW_BuildingMenu, Player);
 
+	// A value of ECrPlayerControlState by entry name, read from the game's own
+	// UEnum: the numbers can move in an update, the names are what the game
+	// saves. False when the enum or the entry is not on this build.
+	inline bool ControlStateValue(const char* name, uint8_t& out)
+	{
+		int64_t value = 0;
+		if (PluginMap::EnumValue("ECrPlayerControlState", name, value) != PluginMap::EnumLookup::Found
+			|| value < 0 || value > UINT8_MAX)
+			return false;
+		out = static_cast<uint8_t>(value);
+		return true;
+	}
+
+	// The building being placed: the controller's building component, and the
+	// helper actor it holds while a building is in hand.
+	inline auto ControllerBuilding = DRONE_FIELD(ACrPlayerControllerBase, BuildingComponent);
+	inline auto HelperActor        = DRONE_FIELD(UCrBuildingComponent, HelperActor);
+
 	// A scene component's world transform. ComponentToWorld is an engine member
 	// the generated SDK does not name, and an FTransform keeps its translation
 	// in a SIMD register, so the translation is a native row of its own at the
@@ -114,6 +132,20 @@ namespace DroneFields
 		"UCrHotbarLocalPlayerSubsystem", "CurrentHotbarIndex", PLUGIN_FIELD_NATIVE, sizeof(uint8_t), 0x48 } };
 	inline auto Hotbars = PluginField<HotbarArrayData>{ { "UCrHotbarLocalPlayerSubsystem::Hotbars",
 		"UCrHotbarLocalPlayerSubsystem", "Hotbars", PLUGIN_FIELD_NATIVE, sizeof(HotbarArrayData), 0x38 } };
+
+	// The slots of one hotbar page. The Game-SDK on a build without hotbar pages
+	// has none of these types, so they are plain specs, not SR_FIELD rows; the
+	// loader reads them off the game's reflection. A page is the entry of Hotbars
+	// at CurrentHotbarIndex, stepped by HotbarPageSize, and its slots are the
+	// SlotsArray at the start of it, stepped by HotbarSlotSize.
+	inline auto HotbarSlots    = PluginField<HotbarArrayData>{ { "FHotbarArray::SlotsArray",
+		"FHotbarArray", "SlotsArray", PLUGIN_FIELD_FLAG_NONE, sizeof(HotbarArrayData), 0 } };
+	inline auto HotbarSlotType = PluginField<uint8_t>{ { "FHotbarInternalSlotData::SlotType",
+		"FHotbarInternalSlotData", "SlotType", PLUGIN_FIELD_FLAG_NONE, sizeof(uint8_t), 0 } };
+	inline auto HotbarPageSize = PluginFieldSpec{ "FHotbarArray", "FHotbarArray", nullptr,
+		PLUGIN_FIELD_FLAG_NONE, 0x10, -1 };
+	inline auto HotbarSlotSize = PluginFieldSpec{ "FHotbarInternalSlotData", "FHotbarInternalSlotData", nullptr,
+		PLUGIN_FIELD_FLAG_NONE, 0x60, -1 };
 
 	// Drone settings and the map's fog of war
 	inline auto SpeedPerSec   = DRONE_FIELD(UAuActorPlacementDeveloperSettings, BuildingDroneSpeedPerSec);
@@ -232,7 +264,7 @@ namespace DroneFields
 			WeaponSystem, WeaponAttributes, AbilitySystem,
 			DroneOwnCamera, SphereComponent, PlacementDeveloperSettings, IdleSound, MovementSound, RotationSound, StateAudioComponents,
 			AttenuationFPP, AttenuationTPP,
-			CrChar, CurrentInteractableActor, PlayerControlState, BuildingMenuPlayer, TransformTranslation,
+			CrChar, CurrentInteractableActor, PlayerControlState, BuildingMenuPlayer, ControllerBuilding, HelperActor, TransformTranslation,
 			SpeedPerSec, MaxRadius, WarningRadius, MaxHeight, WarningHeight, SphereRadius,
 			FogUncoverRadius, MinFootstepDistance, FogRadiusMultiplier,
 			IsSafeInterior, NativeInputActions, NativeInputAction, NativeInputHandler,
@@ -243,12 +275,21 @@ namespace DroneFields
 			WeakSpotResource, InventorySlots, SlotItemId, ItemIdHandle, OreMappingData, PhysMatOreDataMap,
 			MapDataHelper, BuildingsMarkers, BuildingsMarkerData, MarkerBuildingHandle, MarkerLocation,
 			MapMenuMapArea, MapMassMarkers, MapTerrain, MapCanvasPanel, MarkerWidget, MapPivotPoint, MapAreaMatrix,
-			CurrentHotbarIndex, Hotbars,
+			CurrentHotbarIndex, Hotbars, HotbarSlots, HotbarSlotType,
 			MarkerColorData, MarkerPlayerColour,
 			HudPlayerCharacter, HudDistanceT, HudDistanceH, HudDistanceD, HudDistanceU, HudDistanceM,
 			HudHeightT, HudHeightH, HudHeightD, HudHeightU, HudHeightM,
 			NativeInputActionSize, InventorySlotSize, WeakSpotSize, MarkerItemSize, MarkerRepresentationSize,
 			VeinDataSize) && toWorld;
+	}
+
+	// The two struct sizes of the hotbar slots, asked for only once the members
+	// resolved: a build without hotbar pages then turns the feature off with no
+	// warning of its own. Call after Resolve.
+	inline void ResolveHotbarSizes(IPluginSelf* self, IPluginHookScanner* scanner)
+	{
+		if (PluginMap::IsResolved(HotbarSlots) && PluginMap::IsResolved(HotbarSlotType))
+			PluginMap::ResolveFields(scanner, self, HotbarPageSize, HotbarSlotSize);
 	}
 
 	// The map keys of the game functions BetterDrone resolves, so the resolves
@@ -269,6 +310,7 @@ namespace DroneFields
 		inline constexpr const char* CancelTool         = "ACrCharacterPlayerBase::NativeOnWeaponCancelTool";
 		inline constexpr const char* CloseInGameMenu    = "ACrPlayerControllerBase::NativeOnInputCloseInGameMenu";
 		inline constexpr const char* HandleDeactivate   = "UCrUW_ActivatableWidget::HandleDeactivate";
+		inline constexpr const char* CanRestoreInitialState = "UCrBuildingComponent::CanRestoreInitialState";
 		inline constexpr const char* CanDroneBeActive   = "ACrCharacterPlayerBase::CanBuildingDroneBeActive";
 		inline constexpr const char* CheckIfInInterior  = "ACrCharacterPlayerBase::CheckIfInInterior";
 		inline constexpr const char* MapCenterOnLocation = "UCrUW_MapMenuMapArea::CenterOnLocation";
@@ -345,12 +387,29 @@ namespace DroneFields
 			PluginMap::KeysOf(CurrentHotbarIndex, Hotbars),
 			{} };
 
+		// The number keys and the plain mouse wheel pick a building slot of the
+		// current hotbar page in the drone, through the game's own
+		// ActivateItemOnHotbarByIndex. Needs the slot rows above as well as the page
+		// ones; a game build without hotbar pages loses only this and the page
+		// switch.
+		inline PluginMap::Feature HotbarSelect{ "hotbar-select", "Number keys and the mouse wheel pick a building in the drone",
+			PluginMap::KeysOf(CurrentHotbarIndex, Hotbars, HotbarSlots, HotbarSlotType, HotbarPageSize, HotbarSlotSize),
+			{} };
+
 		inline PluginMap::Feature MapOpen{ "drone-map", "Open the map from the drone",
 			PluginMap::KeysOf(Keys::MapMenu),
 			{ "Interaction.Map In Drone Mode", "Interaction.Map Key" } };
 
 		inline PluginMap::Feature BuildMenu{ "build-menu", "Closing the building menu keeps the drone",
 			PluginMap::KeysOf(Keys::CancelTool, Keys::HandleDeactivate, BuildingMenuPlayer),
+			{} };
+
+		// With a new building in hand, the cancel input ends the placement and
+		// keeps the drone, instead of putting the building tool away. It rides the
+		// same cancel-tool detour as BuildMenu, so it also needs that part on. A
+		// part of its own: a game build without these keys loses only this.
+		inline PluginMap::Feature PlacementCancel{ "placement-cancel", "Cancelling a placement keeps the drone",
+			PluginMap::KeysOf(Keys::CancelTool, Keys::CanRestoreInitialState, ControllerBuilding, HelperActor),
 			{} };
 
 		// Esc opens the pause menu in the drone. A part of its own: a game build
@@ -382,7 +441,7 @@ namespace DroneFields
 		{
 			return PluginMap::DeclareFeatures(scanner, self, MiningLaser, MapReveal, MapMarker, MapFollow, Limits, SprintKey,
 				Announcer,
-				AlwaysAllow, WaveShelter, Interaction, HoldTakeAll, HotbarPage, MapOpen, BuildMenu, EscPause, Speedometer, SpeedometerHeight, Audio);
+				AlwaysAllow, WaveShelter, Interaction, HoldTakeAll, HotbarPage, HotbarSelect, MapOpen, BuildMenu, PlacementCancel, EscPause, Speedometer, SpeedometerHeight, Audio);
 		}
 	}
 

@@ -1,12 +1,19 @@
 #pragma once
 #include <plugin_interface.h>
 
-// Ctrl and the mouse wheel switch the hotbar page while the drone is out, the
-// way Ctrl and the wheel do on foot. The drone's own input has no wheel, so
-// the loader's wheel callback takes the notch and the game tick makes the
-// call. Only the wheel is taken here; Ctrl itself still reaches the game.
+// The hotbar while the drone is out. Ctrl and the mouse wheel switch the hotbar
+// page, the way Ctrl and the wheel do on foot. The number keys 1 to 9 and 0
+// pick slots 1 to 10 of the current page, and the plain mouse wheel steps to
+// the next or previous slot, but only building slots: a weapon slot would end
+// the drone and a consumable would be used on the parked body. The drone's own
+// input has none of these, so the loader's key and wheel callbacks take them
+// and the game tick makes the call. Only the wheel and the digits are taken
+// here; Ctrl itself still reaches the game. On foot, the same wheel pick works
+// with the building tool out (build mode or deconstruct mode); everywhere else
+// on foot the wheel and the number keys are the game's.
 
-// Start and stop listening for the wheel. Call from PluginInit and
-// PluginShutdown when DroneFields::Features::HotbarPage is on.
-bool InitDroneHotbar(IPluginSelf* self);
+// Start and stop listening. Call from PluginInit and PluginShutdown when
+// DroneFields::Features::HotbarPage or HotbarSelect is on; `page` and `select`
+// say which of the two is.
+bool InitDroneHotbar(IPluginSelf* self, bool page, bool select);
 void ShutdownDroneHotbar(IPluginSelf* self);

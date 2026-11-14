@@ -188,6 +188,7 @@ extern "C" __declspec(dllexport) void OnPluginLoadHooks(IPluginSelf* self, IPlug
     ResolveDroneEscPause(self, scanner);
     ResolveDroneLaser(self, scanner);
     DroneFields::Resolve(self, scanner);
+    DroneFields::ResolveHotbarSizes(self, scanner);
 }
 
 extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
@@ -223,8 +224,8 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
     InitWavePatch(DroneFields::Features::AlwaysAllow.On(), DroneFields::Features::WaveShelter.On());
     if (DroneFields::Features::Interaction.On())
         InitDroneInteract();
-    if (DroneFields::Features::HotbarPage.On())
-        InitDroneHotbar(self);
+    if (DroneFields::Features::HotbarPage.On() || DroneFields::Features::HotbarSelect.On())
+        InitDroneHotbar(self, DroneFields::Features::HotbarPage.On(), DroneFields::Features::HotbarSelect.On());
     if (DroneFields::Features::MapOpen.On())
         InitDroneMap();
     if (DroneFields::Features::MapFollow.On())
@@ -264,7 +265,7 @@ extern "C" __declspec(dllexport) void PluginShutdown()
         ShutdownDroneLaser(g_self);
     if (DroneFields::Features::Interaction.On())
         ShutdownDroneInteract();
-    if (DroneFields::Features::HotbarPage.On())
+    if (DroneFields::Features::HotbarPage.On() || DroneFields::Features::HotbarSelect.On())
         ShutdownDroneHotbar(g_self);
     if (DroneFields::Features::MapOpen.On())
         ShutdownDroneMap();
