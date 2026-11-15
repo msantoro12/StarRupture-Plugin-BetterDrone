@@ -309,7 +309,7 @@ namespace DroneFields
 		inline constexpr const char* UncoverFog         = "UCrMapManuSubsystem::UncoverFogOfWar";
 		inline constexpr const char* CancelTool         = "ACrCharacterPlayerBase::NativeOnWeaponCancelTool";
 		inline constexpr const char* CloseInGameMenu    = "ACrPlayerControllerBase::NativeOnInputCloseInGameMenu";
-		inline constexpr const char* HandleDeactivate   = "UCrUW_ActivatableWidget::HandleDeactivate";
+		inline constexpr const char* DeactivateBuildingDrone = "ACrCharacterPlayerBase::DeactivateBuildingDrone";
 		inline constexpr const char* CanRestoreInitialState = "UCrBuildingComponent::CanRestoreInitialState";
 		inline constexpr const char* CanDroneBeActive   = "ACrCharacterPlayerBase::CanBuildingDroneBeActive";
 		inline constexpr const char* CheckIfInInterior  = "ACrCharacterPlayerBase::CheckIfInInterior";
@@ -401,7 +401,7 @@ namespace DroneFields
 			{ "Interaction.Map In Drone Mode", "Interaction.Map Key" } };
 
 		inline PluginMap::Feature BuildMenu{ "build-menu", "Closing the building menu keeps the drone",
-			PluginMap::KeysOf(Keys::CancelTool, Keys::HandleDeactivate, BuildingMenuPlayer),
+			PluginMap::KeysOf(Keys::CancelTool, BuildingMenuPlayer),
 			{} };
 
 		// With a new building in hand, the cancel input ends the placement and

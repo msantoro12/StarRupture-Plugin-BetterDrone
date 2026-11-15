@@ -398,6 +398,8 @@ namespace DroneConfig
             { "Interaction", "Map Key",                ConfigValueType::Keybind, "M",         "Key that opens the map while the drone is out. Set it to the game's own map key.", 0.0f, 0.0f },
             { "Interaction", "Map Centre Key",         ConfigValueType::Keybind, "C",         "Key that switches the open map between your character and the drone while the drone is out. Set it to the game's own Center on player key.", 0.0f, 0.0f },
             { "Interaction", "Esc Opens Pause Menu In Drone Mode", ConfigValueType::Boolean, "false", "Esc opens the pause menu while you fly the drone, and you stay in the drone when it closes. Off: Esc recalls the drone. Q still recalls it either way. Esc while placing a building is unchanged.", 0.0f, 1.0f },
+            { "Interaction", "Number Keys Pick Hotbar On Foot", ConfigValueType::Boolean, "true", "The number keys pick the hotbar slot on foot in every state: no mode, build mode and delete mode. Off: the game's own number keys.", 0.0f, 1.0f },
+            { "Interaction", "Mouse Wheel Picks Hotbar On Foot", ConfigValueType::Boolean, "true", "The mouse wheel steps to the next or previous building or weapon slot of the hotbar on foot, in every state, and skips empty and consumable slots. Off: the wheel cycles weapons as the game does.", 0.0f, 1.0f },
             { "Interaction", "Drone Reveals Map",      ConfigValueType::Boolean, "false",     "Flying the drone uncovers the map the way walking does. What it uncovers is saved with your game.", 0.0f, 1.0f },
             // Matches BetterCheats' own ToggleKey default on purpose, so one
             // F10 press opens both panels. The loader dispatches a keypress
@@ -447,6 +449,16 @@ namespace DroneConfig
     bool Config::ReadEscPauseInDrone()
     {
         return s_self ? s_self->config->ReadBool(s_self, "Interaction", "Esc Opens Pause Menu In Drone Mode", false) : false;
+    }
+
+    bool Config::ReadHotbarKeysOnFoot()
+    {
+        return s_self ? s_self->config->ReadBool(s_self, "Interaction", "Number Keys Pick Hotbar On Foot", true) : false;
+    }
+
+    bool Config::ReadHotbarWheelOnFoot()
+    {
+        return s_self ? s_self->config->ReadBool(s_self, "Interaction", "Mouse Wheel Picks Hotbar On Foot", true) : false;
     }
 
     bool Config::ReadDroneRevealsMap()

@@ -100,6 +100,12 @@ SDK::ACrPlayerControllerBase* LocalPlayerController();
 // current tick only.
 SDK::UCrUW_MapMenu* ActiveLocalMap();
 
+// Game thread only. A handler of the Q, B or Esc press in flight ran: opens
+// the window in which the building drone's end is held back while the building
+// menu is closed or a placement ended. The game's handlers run in no fixed
+// order, so each hooked one calls this.
+void NoteDronePress();
+
 // True while anything is on the game's menu layer: the map, the inventory, a
 // building window, the pause menu. A menu that is closing still counts, until
 // its close animation has ended. Any thread; as of the loader's last tick.

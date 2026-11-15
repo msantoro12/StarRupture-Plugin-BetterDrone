@@ -123,6 +123,7 @@
     <ClCompile Include="$(StarRuptureSDKSourceDir)Engine_functions.cpp" />
     <ClCompile Include="$(StarRuptureSDKSourceDir)Chimera_functions.cpp" />
     <ClCompile Include="$(StarRuptureSDKSourceDir)ChimeraUI_functions.cpp" />
+    <ClCompile Include="$(StarRuptureSDKSourceDir)CommonUI_functions.cpp" />
     <ClCompile Include="$(StarRuptureSDKSourceDir)UMG_functions.cpp" />
     <ClCompile Include="$(StarRuptureSDKSourceDir)GameplayAbilities_functions.cpp" />
     <ClCompile Include="$(StarRuptureSDKSourceDir)Niagara_functions.cpp" />

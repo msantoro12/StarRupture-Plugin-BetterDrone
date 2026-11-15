@@ -2,9 +2,9 @@
 #include <plugin_interface.h>
 
 // The hotbar while the drone is out. Ctrl and the mouse wheel switch the hotbar
-// page, the way Ctrl and the wheel do on foot. The number keys 1 to 9 and 0
-// pick slots 1 to 10 of the current page, and the plain mouse wheel steps to
-// the next or previous slot, but only building slots: a weapon slot would end
+// page, the way Ctrl and the wheel do on foot. The number keys 0 to 9 pick
+// slots 0 to 9 of the current page (key N is slot N), and the plain mouse
+// wheel steps to the next or previous slot, but only building slots: a weapon slot would end
 // the drone and a consumable would be used on the parked body. The drone's own
 // input has none of these, so the loader's key and wheel callbacks take them
 // and the game tick makes the call. Only the wheel and the digits are taken

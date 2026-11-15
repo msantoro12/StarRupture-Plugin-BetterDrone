@@ -110,6 +110,9 @@ namespace
 
     void __fastcall Detour_NativeOnInputCloseInGameMenu(void* controller, const void* value)
     {
+        // The press may reach this handler before the cancel-tool one.
+        NoteDronePress();
+
         auto* pc = static_cast<SDK::ACrPlayerControllerBase*>(controller);
         if (EscInDrone(pc))
         {
