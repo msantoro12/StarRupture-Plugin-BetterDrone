@@ -1,0 +1,29 @@
+# Throwaway: proves the frozen plugin-release.yml@v1.23.0 and plugin-release.yml@main both
+# build against today's Plugin SDK main. dry_run is hard-coded true: no release, no Nexus, no secrets.
+name: Dry-run SDK pin check
+
+on:
+  push:
+    branches:
+      - ci/dryrun-sdk-pin-check
+
+jobs:
+  frozen-v1-23-0:
+    permissions:
+      contents: write
+    uses: AlienXAXS/StarRupture-Plugin-SDK/.github/workflows/plugin-release.yml@v1.23.0
+    with:
+      plugin_name: BetterDrone
+      solution_file: BetterDrone.sln
+      release_title: BetterDrone Plugin
+      dry_run: true
+
+  main-workflow:
+    permissions:
+      contents: write
+    uses: AlienXAXS/StarRupture-Plugin-SDK/.github/workflows/plugin-release.yml@main
+    with:
+      plugin_name: BetterDrone
+      solution_file: BetterDrone.sln
+      release_title: BetterDrone Plugin
+      dry_run: true
